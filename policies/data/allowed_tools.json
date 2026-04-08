@@ -1,0 +1,22 @@
+{
+  "allowed_tools": {
+    "data-analyst": ["file_read", "file_write", "openai_call"],
+    "web-researcher": ["file_read", "file_write", "openai_call", "http_get"]
+  },
+  "allowed_egress_fqdns": {
+    "data-analyst": [],
+    "web-researcher": ["api.github.com", "api.wikipedia.org"]
+  },
+  "allowed_paths": {
+    "data-analyst": ["/workspace/{run_id}/read/", "/workspace/{run_id}/write/"],
+    "web-researcher": ["/workspace/{run_id}/read/", "/workspace/{run_id}/write/"]
+  },
+  "kill_switches": {
+    "agent-execution-enabled": true,
+    "file-write-enabled": true,
+    "network-egress-enabled": true,
+    "openai-calls-enabled": true,
+    "agent-data-analyst-enabled": true,
+    "agent-web-researcher-enabled": true
+  }
+}

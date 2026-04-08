@@ -1,0 +1,172 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, prod]
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  AZURE_LOCATION: eastus
+
+jobs:
+  # ── Deploy Infrastructure ────────────────────────────────────────────────────
+  deploy-infra:
+    name: Deploy Bicep Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    outputs:
+      acr_endpoint: ${{ steps.deploy.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+      aca_env_name: ${{ steps.deploy.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME }}
+      orchestrator_app: ${{ steps.deploy.outputs.ORCHESTRATOR_APP_NAME }}
+      agent_job: ${{ steps.deploy.outputs.AGENT_JOB_NAME }}
+      resource_group: ${{ steps.deploy.outputs.AZURE_RESOURCE_GROUP }}
+      apim_url: ${{ steps.deploy.outputs.APIM_GATEWAY_URL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC — no stored credentials)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy Bicep
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: subscription
+          region: ${{ env.AZURE_LOCATION }}
+          template: infra/main.bicep
+          parameters: >
+            environmentName=${{ env.ENVIRONMENT }}
+            location=${{ env.AZURE_LOCATION }}
+            approverEmail=${{ secrets.APPROVER_EMAIL }}
+          deploymentName: ai-sandbox-${{ github.run_number }}
+          failOnStdErr: true
+
+  # ── Build & Push Container Images ────────────────────────────────────────────
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR Login
+        run: az acr login --name ${{ needs.deploy-infra.outputs.acr_endpoint }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push orchestrator image
+        uses: docker/build-push-action@v5
+        with:
+          context: app/
+          push: true
+          tags: |
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/orchestrator:latest
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/orchestrator:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Tag agent-runner (same image, different role)
+        run: |
+          ACR=${{ needs.deploy-infra.outputs.acr_endpoint }}
+          docker tag ${ACR}/ai-sandbox/orchestrator:latest ${ACR}/ai-sandbox/agent-runner:latest
+          docker push ${ACR}/ai-sandbox/agent-runner:latest
+
+  # ── Push OPA Policy Bundle ───────────────────────────────────────────────────
+  push-policies:
+    name: Push OPA Policy Bundle
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install OPA
+        run: |
+          curl -L -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+
+      - name: Build OPA bundle
+        run: |
+          opa build policies/ -o bundle.tar.gz
+          echo "Bundle built: $(du -sh bundle.tar.gz)"
+
+      - name: Upload bundle to workspace storage
+        run: |
+          RG=${{ needs.deploy-infra.outputs.resource_group }}
+          SA=$(az storage account list -g $RG --query "[?contains(name,'work')].name" -o tsv)
+          az storage blob upload \
+            --account-name $SA \
+            --container-name opa-bundles \
+            --name bundle.tar.gz \
+            --file bundle.tar.gz \
+            --auth-mode login \
+            --overwrite
+
+  # ── Update Container App ─────────────────────────────────────────────────────
+  update-app:
+    name: Update Container App
+    runs-on: ubuntu-latest
+    needs: [deploy-infra, build-push, push-policies]
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update orchestrator app revision
+        run: |
+          RG=${{ needs.deploy-infra.outputs.resource_group }}
+          APP=${{ needs.deploy-infra.outputs.orchestrator_app }}
+          ACR=${{ needs.deploy-infra.outputs.acr_endpoint }}
+          az containerapp update \
+            --name $APP \
+            --resource-group $RG \
+            --image ${ACR}/ai-sandbox/orchestrator:${{ github.sha }}
+
+      - name: Smoke test — health endpoint
+        run: |
+          APIM_URL=${{ needs.deploy-infra.outputs.apim_url }}
+          # Give the revision a moment to warm up
+          sleep 15
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${APIM_URL}/sandbox/health)
+          if [ "$STATUS" != "200" ]; then
+            echo "Health check failed: HTTP $STATUS"
+            exit 1
+          fi
+          echo "Health check passed: HTTP $STATUS"
