@@ -1,0 +1,125 @@
+// ── Audit event from SSE stream or Log Analytics ──────────────────────────────
+
+export type ActionType =
+  | "file_read"
+  | "file_write"
+  | "file_delete"
+  | "openai_call"
+  | "http_get"
+  | "http_post"
+  | "kill_switch_check"
+  | "policy_check"
+  | "approval_request";
+
+export type PolicyDecision = "allow" | "deny" | "requires_approval";
+export type Outcome = "success" | "failure" | "blocked" | "pending_approval";
+
+export interface AuditEvent {
+  event_id: string;
+  timestamp: string;
+  run_id: string;
+  agent_type: string;
+  action_type: ActionType;
+  policy_decision: PolicyDecision;
+  path?: string;
+  destination?: string;
+  content_hash?: string;
+  token_count?: number;
+  risk_score: number;
+  outcome: Outcome;
+  error_code?: string;
+  correlation_id: string;
+}
+
+// ── Agent run ─────────────────────────────────────────────────────────────────
+
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "killed";
+
+export interface AgentRun {
+  run_id: string;
+  status: RunStatus;
+  agent_type: string;
+  task: string;
+  created_at: string;
+  completed_at?: string;
+  result?: string;
+  error?: string;
+  token_usage: number;
+  events: AuditEvent[];
+}
+
+// ── Sentinel alert ────────────────────────────────────────────────────────────
+
+export type AlertSeverity = "Informational" | "Low" | "Medium" | "High";
+
+export interface SentinelAlert {
+  id: string;
+  name: string;
+  severity: AlertSeverity;
+  description: string;
+  timestamp: string;
+  status: "New" | "Active" | "Closed";
+  tactics: string;
+  entities: string;
+}
+
+// ── Kill switch ───────────────────────────────────────────────────────────────
+
+export interface KillSwitch {
+  name: string;
+  label: string;
+  enabled: boolean;
+  description: string;
+  scope: "global" | "capability" | "agent-type";
+}
+
+// ── Attack template ───────────────────────────────────────────────────────────
+
+export type AttackCategory =
+  | "prompt-injection"
+  | "path-traversal"
+  | "credential-harvest"
+  | "token-bomb"
+  | "ssrf"
+  | "policy-bypass";
+
+export interface AttackTemplate {
+  id: string;
+  name: string;
+  category: AttackCategory;
+  severity: AlertSeverity;
+  description: string;
+  /** Controls that should fire */
+  expectedBlocks: string[];
+  agentType: "data-analyst" | "web-researcher";
+  task: string;
+  /** Optional file to upload alongside the task */
+  fileTemplate?: {
+    filename: string;
+    mimeType: string;
+    publicPath: string; // path under /templates/ for download
+  };
+  /** Badge color for the category */
+  color: string;
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+
+export type SSEMessage =
+  | { type: "event"; data: AuditEvent }
+  | { type: "run_complete"; data: { run_id: string; status: RunStatus } }
+  | { type: "keepalive" };
+
+// ── Timeline response from /runs/{id}/timeline ────────────────────────────────
+
+export interface TimelineResponse {
+  run_id: string;
+  events: AuditEvent[];
+  kql_query: string;
+  source: "log_analytics" | "local_cache";
+}
