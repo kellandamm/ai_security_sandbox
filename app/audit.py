@@ -14,7 +14,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 from azure.core.exceptions import AzureError
@@ -44,13 +44,21 @@ class AuditLogger:
                             outcome=Outcome.SUCCESS)
     """
 
-    def __init__(self, run_id: str, agent_type: str, correlation_id: str):
+    def __init__(
+        self,
+        run_id: str,
+        agent_type: str,
+        correlation_id: str,
+        on_event: Optional[Callable[[dict], None]] = None,
+    ):
         self.run_id = run_id
         self.agent_type = agent_type
         self.correlation_id = correlation_id
         self._credential = DefaultAzureCredential()
         self._blob_client: Optional[AppendBlobClient] = None
         self._blob_name = f"{run_id}/{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
+        # Optional callback — used by the SSE endpoint to stream events to the browser
+        self._on_event = on_event
 
     def _get_blob_client(self) -> AppendBlobClient:
         if self._blob_client is None and AUDIT_STORAGE_ACCOUNT:
@@ -95,6 +103,13 @@ class AuditLogger:
 
         # Always log to stdout for container log capture
         logger.info("audit", extra={"event": event.model_dump(mode="json")})
+
+        # Push to SSE queue if a frontend listener is connected
+        if self._on_event:
+            try:
+                self._on_event(event.model_dump(mode="json"))
+            except Exception:
+                pass
 
         # Non-blocking: fire and forget to Log Analytics + blob
         self._send_to_log_analytics(event)

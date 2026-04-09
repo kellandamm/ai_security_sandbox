@@ -1,0 +1,157 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: #0a0e1a;
+    color: #e2e8f0;
+    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Custom scrollbars */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0f1629;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1e2d4a;
+    border-radius: 3px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3b82f6;
+  }
+
+  /* Selection */
+  ::selection {
+    background-color: rgba(59, 130, 246, 0.3);
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-soc-panel border border-soc-border rounded-lg;
+  }
+
+  .panel-header {
+    @apply px-4 py-3 border-b border-soc-border flex items-center justify-between;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-red {
+    @apply badge bg-red-500/20 text-red-400 border border-red-500/30;
+  }
+
+  .badge-orange {
+    @apply badge bg-orange-500/20 text-orange-400 border border-orange-500/30;
+  }
+
+  .badge-yellow {
+    @apply badge bg-yellow-500/20 text-yellow-400 border border-yellow-500/30;
+  }
+
+  .badge-green {
+    @apply badge bg-green-500/20 text-green-400 border border-green-500/30;
+  }
+
+  .badge-blue {
+    @apply badge bg-blue-500/20 text-blue-400 border border-blue-500/30;
+  }
+
+  .badge-gray {
+    @apply badge bg-slate-500/20 text-slate-400 border border-slate-500/30;
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-soc-blue hover:bg-blue-500 text-white;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-600 hover:bg-red-500 text-white;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent hover:bg-soc-accent text-soc-muted hover:text-soc-text border border-soc-border;
+  }
+
+  .event-row {
+    @apply flex items-start gap-3 py-2 px-3 hover:bg-soc-accent/30 rounded transition-colors;
+  }
+
+  .log-line {
+    @apply text-xs font-mono text-soc-muted leading-relaxed;
+  }
+
+  .glow-green {
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+  }
+
+  .glow-red {
+    box-shadow: 0 0 8px rgba(239, 68, 68, 0.4);
+  }
+
+  .pulse-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+
+  .pulse-dot-green {
+    @apply pulse-dot bg-soc-green animate-pulse;
+  }
+
+  .pulse-dot-red {
+    @apply pulse-dot bg-soc-red animate-pulse;
+  }
+
+  .pulse-dot-yellow {
+    @apply pulse-dot bg-soc-yellow;
+  }
+}
+
+/* Terminal-style blinking cursor */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.cursor-blink::after {
+  content: "█";
+  animation: blink 1s step-start infinite;
+  color: #3b82f6;
+}
+
+/* Scanline effect for SOC aesthetic */
+.scanlines {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.03) 2px,
+    rgba(0, 0, 0, 0.03) 4px
+  );
+  pointer-events: none;
+}

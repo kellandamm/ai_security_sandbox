@@ -293,6 +293,67 @@ resource agentJob 'Microsoft.App/jobs@2023-05-01' = {
   }
 }
 
+// ─── Frontend Container App (SOC dashboard) ──────────────────────────────────
+// Separate app serving the React SPA. Internal ingress — fronted by APIM.
+// No secrets, no managed identity needed — just static files via nginx.
+
+resource frontendApp 'Microsoft.App/containerApps@2023-05-01' = {
+  name: 'ca-frontend-${resourceToken}'
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${orchestratorIdentityId}': {}  // ACR pull only
+    }
+  }
+  properties: {
+    managedEnvironmentId: acaEnv.id
+    workloadProfileName: 'Consumption'
+    configuration: {
+      ingress: {
+        external: false         // APIM is the public entry point
+        targetPort: 80
+        transport: 'http'
+        allowInsecure: false
+      }
+      registries: [
+        {
+          server: acr.properties.loginServer
+          identity: orchestratorIdentityId
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'frontend'
+          image: '${acr.properties.loginServer}/ai-sandbox/frontend:latest'
+          resources: {
+            cpu: json('0.25')
+            memory: '512Mi'
+          }
+          env: [
+            // VITE_API_BASE is baked into the image at build time via ARG/ENV.
+            // The nginx proxy rewrites /api → orchestrator app on port 8000.
+            { name: 'BACKEND_URL', value: 'http://ca-orchestrator-${resourceToken}:8000' }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 5
+        rules: [
+          {
+            name: 'http-scale'
+            http: { metadata: { concurrentRequests: '20' } }
+          }
+        ]
+      }
+    }
+  }
+}
+
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output acrLoginServer string = acr.properties.loginServer
@@ -301,3 +362,5 @@ output containerAppsEnvironmentId string = acaEnv.id
 output orchestratorAppName string = orchestratorApp.name
 output orchestratorAppUrl string = 'https://${orchestratorApp.properties.configuration.ingress.fqdn}'
 output agentJobName string = agentJob.name
+output frontendAppName string = frontendApp.name
+output frontendAppUrl string = 'https://${frontendApp.properties.configuration.ingress.fqdn}'
