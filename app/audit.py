@@ -19,7 +19,7 @@ from typing import Callable, Optional
 import requests
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, AppendBlobClient
+from azure.storage.blob import BlobServiceClient, BlobClient
 
 from models.audit_event import AuditEvent, ActionType, Outcome, PolicyDecision
 
@@ -55,12 +55,12 @@ class AuditLogger:
         self.agent_type = agent_type
         self.correlation_id = correlation_id
         self._credential = DefaultAzureCredential()
-        self._blob_client: Optional[AppendBlobClient] = None
+        self._blob_client: Optional[BlobClient] = None
         self._blob_name = f"{run_id}/{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
         # Optional callback — used by the SSE endpoint to stream events to the browser
         self._on_event = on_event
 
-    def _get_blob_client(self) -> AppendBlobClient:
+    def _get_blob_client(self) -> BlobClient:
         if self._blob_client is None and AUDIT_STORAGE_ACCOUNT:
             account_url = f"https://{AUDIT_STORAGE_ACCOUNT}.blob.core.windows.net"
             service = BlobServiceClient(account_url=account_url, credential=self._credential)
