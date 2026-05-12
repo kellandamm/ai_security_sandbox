@@ -23,12 +23,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ github.event.inputs.environment || 'dev' }}
     outputs:
+      acr_name: ${{ steps.deploy.outputs.AZURE_CONTAINER_REGISTRY_NAME }}
       acr_endpoint: ${{ steps.deploy.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
       aca_env_name: ${{ steps.deploy.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME }}
       orchestrator_app: ${{ steps.deploy.outputs.ORCHESTRATOR_APP_NAME }}
+      orchestrator_webapp_name: ${{ steps.deploy.outputs.ORCHESTRATOR_WEBAPP_NAME }}
+      opa_webapp_name: ${{ steps.deploy.outputs.OPA_WEBAPP_NAME }}
       agent_job: ${{ steps.deploy.outputs.AGENT_JOB_NAME }}
       resource_group: ${{ steps.deploy.outputs.AZURE_RESOURCE_GROUP }}
       apim_url: ${{ steps.deploy.outputs.APIM_GATEWAY_URL }}
+      frontend_url: ${{ steps.deploy.outputs.FRONTEND_URL }}
+      frontend_webapp_name: ${{ steps.deploy.outputs.FRONTEND_WEBAPP_NAME }}
+      frontend_storage_account: ${{ steps.deploy.outputs.FRONTEND_STORAGE_ACCOUNT_NAME }}
+      aad_client_id: ${{ steps.deploy.outputs.AAD_CLIENT_ID }}
 
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +46,12 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve deployer principal ID
+        id: deployer
+        run: |
+          PRINCIPAL_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
 
       - name: Deploy Bicep
         id: deploy
@@ -51,6 +64,8 @@ jobs:
             environmentName=${{ env.ENVIRONMENT }}
             location=${{ env.AZURE_LOCATION }}
             approverEmail=${{ secrets.APPROVER_EMAIL }}
+            aadClientId=${{ secrets.AAD_CLIENT_ID }}
+            deployerPrincipalId=${{ steps.deployer.outputs.principal_id }}
           deploymentName: ai-sandbox-${{ github.run_number }}
           failOnStdErr: true
 
@@ -94,9 +109,8 @@ jobs:
           docker tag ${ACR}/ai-sandbox/orchestrator:latest ${ACR}/ai-sandbox/agent-runner:latest
           docker push ${ACR}/ai-sandbox/agent-runner:latest
 
-  # ── Push OPA Policy Bundle ───────────────────────────────────────────────────
-  push-policies:
-    name: Push OPA Policy Bundle
+  publish-frontend:
+    name: Build & Deploy Frontend Web App
     runs-on: ubuntu-latest
     needs: deploy-infra
     environment: ${{ github.event.inputs.environment || 'dev' }}
@@ -111,34 +125,116 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Install OPA
+      - name: ACR Login
         run: |
-          curl -L -o /usr/local/bin/opa \
-            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
-          chmod +x /usr/local/bin/opa
+          az acr login --name ${{ needs.deploy-infra.outputs.acr_name }}
 
-      - name: Build OPA bundle
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend/
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/frontend:latest
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/frontend:${{ github.sha }}
+          build-args: |
+            VITE_API_BASE=${{ needs.deploy-infra.outputs.apim_url }}/sandbox
+            VITE_AAD_CLIENT_ID=${{ needs.deploy-infra.outputs.aad_client_id }}
+            VITE_AAD_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restart frontend web app
         run: |
-          opa build policies/ -o bundle.tar.gz
-          echo "Bundle built: $(du -sh bundle.tar.gz)"
+          az webapp restart \
+            --resource-group ${{ needs.deploy-infra.outputs.resource_group }} \
+            --name ${{ needs.deploy-infra.outputs.frontend_webapp_name }}
 
-      - name: Upload bundle to workspace storage
+      - name: Configure frontend authentication
+        run: |
+          chmod +x scripts/configure-frontend-auth.sh
+          scripts/configure-frontend-auth.sh \
+            "${{ needs.deploy-infra.outputs.frontend_url }}" \
+            "${{ needs.deploy-infra.outputs.frontend_webapp_name }}" \
+            "${{ needs.deploy-infra.outputs.resource_group }}" \
+            "${{ needs.deploy-infra.outputs.aad_client_id }}"
+
+  # ── Build OPA Image & Patch Sidecars ─────────────────────────────────────────
+  push-policies:
+    name: Build OPA Image & Patch Sidecars
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build custom OPA image in ACR
+        run: |
+          az acr build \
+            --registry ${{ needs.deploy-infra.outputs.acr_name }} \
+            --image opa:latest-static \
+            --file opa/Dockerfile \
+            .
+
+      - name: Patch orchestrator and agent job with real OPA image
         run: |
           RG=${{ needs.deploy-infra.outputs.resource_group }}
-          SA=$(az storage account list -g $RG --query "[?contains(name,'work')].name" -o tsv)
-          az storage blob upload \
-            --account-name $SA \
-            --container-name opa-bundles \
-            --name bundle.tar.gz \
-            --file bundle.tar.gz \
-            --auth-mode login \
-            --overwrite
+          SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+          OPA_IMAGE="${{ needs.deploy-infra.outputs.acr_endpoint }}/opa:latest-static"
+          APP=${{ needs.deploy-infra.outputs.orchestrator_app }}
+          JOB=${{ needs.deploy-infra.outputs.agent_job }}
+          OPA_WEBAPP=${{ needs.deploy-infra.outputs.opa_webapp_name }}
+
+          patch_opa_sidecar() {
+            local CLI_CMD="$1" NAME="$2" ARM_TYPE="$3"
+            JSON=$(az $CLI_CMD show --name "$NAME" --resource-group "$RG")
+            CONTAINERS=$(echo "$JSON" | python3 -c "
+          import json,sys
+          j=json.load(sys.stdin)
+          for c in j['properties']['template']['containers']:
+              c.pop('imageType', None)
+              if c['name']=='opa-sidecar':
+                  c['image']='$OPA_IMAGE'
+          print(json.dumps(j['properties']['template']['containers']))
+          ")
+            az rest --method PATCH \
+              --uri "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.App/${ARM_TYPE}/$NAME?api-version=2024-03-01" \
+              --body "{\"properties\":{\"template\":{\"containers\":$CONTAINERS}}}" \
+              --headers "Content-Type=application/json"
+          }
+
+          patch_opa_sidecar "containerapp" "$APP" "containerApps"
+          patch_opa_sidecar "containerapp job" "$JOB" "jobs"
+
+          if [ -n "$OPA_WEBAPP" ]; then
+            az webapp config set \
+              --name "$OPA_WEBAPP" \
+              --resource-group "$RG" \
+              --linux-fx-version "DOCKER|$OPA_IMAGE"
+            az webapp config appsettings set \
+              --resource-group "$RG" \
+              --name "$OPA_WEBAPP" \
+              --settings WEBSITES_PORT=8181 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+            az webapp restart --resource-group "$RG" --name "$OPA_WEBAPP"
+          fi
 
   # ── Update Container App ─────────────────────────────────────────────────────
   update-app:
     name: Update Container App
     runs-on: ubuntu-latest
-    needs: [deploy-infra, build-push, push-policies]
+    needs: [deploy-infra, build-push, publish-frontend, push-policies]
     environment: ${{ github.event.inputs.environment || 'dev' }}
 
     steps:
@@ -149,24 +245,23 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Update orchestrator app revision
+      - name: Update orchestrator web app container image
         run: |
           RG=${{ needs.deploy-infra.outputs.resource_group }}
-          APP=${{ needs.deploy-infra.outputs.orchestrator_app }}
+          APP=${{ needs.deploy-infra.outputs.orchestrator_webapp_name }}
           ACR=${{ needs.deploy-infra.outputs.acr_endpoint }}
-          az containerapp update \
+          az webapp config set \
             --name $APP \
             --resource-group $RG \
-            --image ${ACR}/ai-sandbox/orchestrator:${{ github.sha }}
+            --linux-fx-version "DOCKER|${ACR}/ai-sandbox/orchestrator:${{ github.sha }}"
+          az webapp restart --resource-group $RG --name $APP
 
-      - name: Smoke test — health endpoint
+      - name: Smoke test — APIM inward
+        shell: pwsh
         run: |
-          APIM_URL=${{ needs.deploy-infra.outputs.apim_url }}
-          # Give the revision a moment to warm up
-          sleep 15
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${APIM_URL}/sandbox/health)
-          if [ "$STATUS" != "200" ]; then
-            echo "Health check failed: HTTP $STATUS"
-            exit 1
-          fi
-          echo "Health check passed: HTTP $STATUS"
+          Start-Sleep -Seconds 20
+          ./scripts/smoke-test.ps1 `
+            -ApimUrl "${{ needs.deploy-infra.outputs.apim_url }}" `
+            -FrontendUrl "${{ needs.deploy-infra.outputs.frontend_url }}" `
+            -AadClientId "${{ needs.deploy-infra.outputs.aad_client_id }}" `
+            -AllowHealthOnlyFallback

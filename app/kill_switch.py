@@ -30,6 +30,7 @@ CACHE_TTL_SECONDS = 10
 
 class KillSwitchError(Exception):
     """Raised when a kill switch is active."""
+
     def __init__(self, flag_name: str):
         self.flag_name = flag_name
         super().__init__(f"Kill switch active: {flag_name}")
@@ -74,14 +75,17 @@ class KillSwitchClient:
                 label=LABEL,
             )
             import json
+
             flag_doc = json.loads(setting.value)
             enabled: bool = flag_doc.get("enabled", True)
             self._cache[flag_name] = (enabled, now + CACHE_TTL_SECONDS)
             return enabled
         except Exception as exc:
             logger.critical(
-                "KILL_SWITCH_FAIL_CLOSED: App Configuration unreachable for flag '%s': %s. "
-                "Defaulting to BLOCKED.",
+                (
+                    "KILL_SWITCH_FAIL_CLOSED: App Configuration unreachable "
+                    "for flag '%s': %s. Defaulting to BLOCKED."
+                ),
                 flag_name,
                 exc,
             )
@@ -89,7 +93,9 @@ class KillSwitchClient:
             self._cache[flag_name] = (False, now + 5)
             return False
 
-    def check(self, agent_type: Optional[str] = None, action_type: Optional[str] = None) -> None:
+    def check(
+        self, agent_type: Optional[str] = None, action_type: Optional[str] = None
+    ) -> None:
         """
         Check all applicable kill switches. Raises KillSwitchError if any are active.
 
@@ -117,7 +123,9 @@ class KillSwitchClient:
             if flag and not self._read_flag(flag):
                 raise KillSwitchError(flag)
 
-    def is_enabled(self, agent_type: Optional[str] = None, action_type: Optional[str] = None) -> bool:
+    def is_enabled(
+        self, agent_type: Optional[str] = None, action_type: Optional[str] = None
+    ) -> bool:
         """Boolean convenience wrapper — returns False if any kill switch is active."""
         try:
             self.check(agent_type=agent_type, action_type=action_type)

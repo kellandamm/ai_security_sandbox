@@ -19,7 +19,9 @@ class RateLimitExceeded(Exception):
     def __init__(self, identifier: str, retry_after: float):
         self.identifier = identifier
         self.retry_after = retry_after
-        super().__init__(f"Rate limit exceeded for {identifier!r}. Retry after {retry_after:.1f}s")
+        super().__init__(
+            f"Rate limit exceeded for {identifier!r}. Retry after {retry_after:.1f}s"
+        )
 
 
 class TokenBucket:
@@ -47,7 +49,9 @@ class TokenBucket:
         with self._lock:
             now = time.monotonic()
             elapsed = now - self._last_refill
-            self._tokens = min(self._capacity, self._tokens + elapsed * self._refill_rate)
+            self._tokens = min(
+                self._capacity, self._tokens + elapsed * self._refill_rate
+            )
             self._last_refill = now
 
             if self._tokens >= tokens:
@@ -99,10 +103,12 @@ class TokenBudget:
     def consume(self, tokens: int) -> None:
         """Raises QuotaExceededError if budget is exhausted."""
         from sandbox import QuotaExceededError
+
         with self._lock:
             if self._used + tokens > self._max:
                 raise QuotaExceededError(
-                    f"Token budget exhausted: used={self._used}, requested={tokens}, max={self._max}"
+                    "Token budget exhausted: "
+                    f"used={self._used}, requested={tokens}, max={self._max}"
                 )
             self._used += tokens
 

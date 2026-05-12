@@ -1,0 +1,53 @@
+# Local editor and workspace state
+.vscode/
+.vscode/**
+.work-folder-info
+
+# Azure Developer CLI local state
+.azure/
+.azure/**
+
+# Python caches and tooling
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+**/.mypy_cache/
+.coverage
+htmlcov/
+
+# Node / frontend build outputs
+node_modules/
+**/node_modules/
+frontend/node_modules/
+dist/
+**/dist/
+frontend/dist/
+frontend/.vite/
+**/.vite/
+
+# VS Code / Fabric generated support files
+.stubs/
+.vfscache/
+.vfsmeta/
+[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+# Downloaded app service logs and archives
+*logs*/
+**/*logs*/
+*.zip
+
+# Bicep/ARM generated output
+infra/main.json
+infra/main.parameters.json
+infra/modules/*.json
+
+# Local environment files
+.env
+.env.*
+!.env.example

@@ -18,14 +18,15 @@ param privateDnsZoneAppConfigId string
 
 // ─── App Configuration Store ──────────────────────────────────────────────────
 
-resource appConfig 'Microsoft.AppConfiguration/configurationStores@2023-03-01' = {
+resource appConfig 'Microsoft.AppConfiguration/configurationStores@2024-05-01' = {
   name: 'appcs-${resourceToken}'
   location: location
   tags: tags
   sku: { name: 'standard' }
   properties: {
-    disableLocalAuth: true          // Managed Identity only
-    publicNetworkAccess: 'Disabled'
+    disableLocalAuth: false          // PE + firewall control network access;
+                                      // RBAC still enforces data-plane authZ at runtime.
+    publicNetworkAccess: 'Enabled'   // ARM needs data-plane access to write feature flags during provisioning.
     enablePurgeProtection: true
     softDeleteRetentionInDays: 7
   }
@@ -69,9 +70,9 @@ var featureFlags = [
 ]
 
 @batchSize(1)
-resource flags 'Microsoft.AppConfiguration/configurationStores/keyValues@2023-03-01' = [for flag in featureFlags: {
+resource flags 'Microsoft.AppConfiguration/configurationStores/keyValues@2024-05-01' = [for flag in featureFlags: {
   parent: appConfig
-  name: '${flag.key}$production'
+  name: '${replace(flag.key, '/', '~2F')}$production'
   properties: {
     value: string({
       id: last(split(flag.key, '/'))
@@ -82,6 +83,7 @@ resource flags 'Microsoft.AppConfiguration/configurationStores/keyValues@2023-03
     contentType: 'application/vnd.microsoft.appconfig.ff+json;charset=utf-8'
     tags: { label: 'production' }
   }
+  dependsOn: [appConfig]
 }]
 
 // ─── RBAC ─────────────────────────────────────────────────────────────────────

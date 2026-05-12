@@ -23,16 +23,29 @@ resource nsgContainerApps 'Microsoft.Network/networkSecurityGroups@2023-06-01' =
   properties: {
     securityRules: [
       {
-        name: 'AllowApimInbound'
+        name: 'AllowVnetInbound'
         properties: {
           priority: 100
           protocol: 'Tcp'
           access: 'Allow'
           direction: 'Inbound'
-          sourceAddressPrefix: '10.0.2.0/24'
+          sourceAddressPrefix: 'VirtualNetwork'
           sourcePortRange: '*'
           destinationAddressPrefix: '*'
-          destinationPortRange: '443'
+          destinationPortRanges: ['80', '443']
+        }
+      }
+      {
+        name: 'AllowApiManagement'
+        properties: {
+          priority: 120
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: 'ApiManagement'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRanges: ['80', '443']
         }
       }
       {
@@ -61,45 +74,12 @@ resource nsgContainerApps 'Microsoft.Network/networkSecurityGroups@2023-06-01' =
           destinationPortRange: '*'
         }
       }
-      {
-        name: 'AllowOutboundToFirewall'
-        properties: {
-          priority: 100
-          protocol: '*'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '10.0.3.0/26'
-          destinationPortRange: '*'
-        }
-      }
-      {
-        name: 'AllowOutboundToPrivateEndpoints'
-        properties: {
-          priority: 110
-          protocol: 'Tcp'
-          access: 'Allow'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '10.0.4.0/24'
-          destinationPortRange: '443'
-        }
-      }
-      {
-        name: 'DenyAllOutbound'
-        properties: {
-          priority: 4096
-          protocol: '*'
-          access: 'Deny'
-          direction: 'Outbound'
-          sourceAddressPrefix: '*'
-          sourcePortRange: '*'
-          destinationAddressPrefix: '*'
-          destinationPortRange: '*'
-        }
-      }
+      // Outbound: NO custom rules. Egress control is handled by the route table
+      // (force-tunnels 0.0.0.0/0 → Azure Firewall) + firewall FQDN rules.
+      // NSG rules evaluate against the ORIGINAL destination IP, not the next-hop,
+      // so a DenyAllOutbound here would kill traffic before the route table can
+      // redirect it to the firewall. Default Azure NSG rules (AllowVnetOutBound,
+      // AllowInternetOutBound) let traffic flow to the route table → firewall.
     ]
   }
 }
@@ -198,6 +178,20 @@ resource routeTable 'Microsoft.Network/routeTables@2023-06-01' = {
   properties: {
     disableBgpRoutePropagation: true
     routes: [
+      // All intra-VNet traffic bypasses the firewall.
+      // The firewall only controls internet egress (0.0.0.0/0).
+      // This is critical because:
+      // 1. Azure Firewall Application rules drop traffic to private IPs (PEs)
+      // 2. APIM External VNet may use non-subnet IPs for backend calls,
+      //    causing asymmetric routing if return traffic is force-tunnelled
+      // 3. NSGs already control intra-VNet traffic at the subnet level
+      {
+        name: 'VnetLocal'
+        properties: {
+          addressPrefix: '10.0.0.0/16'
+          nextHopType: 'VnetLocal'
+        }
+      }
       {
         name: 'DefaultToFirewall'
         properties: {
@@ -339,7 +333,7 @@ resource firewallPolicyRuleGroup 'Microsoft.Network/firewallPolicies/ruleCollect
               ruleType: 'ApplicationRule'
               name: 'AllowACR'
               protocols: [{ protocolType: 'Https', port: 443 }]
-              targetFqdns: ['*.azurecr.io', 'mcr.microsoft.com']
+              targetFqdns: ['*.azurecr.io', 'mcr.microsoft.com', '*.data.mcr.microsoft.com']
               sourceAddresses: ['10.0.1.0/24']
             }
             {
@@ -347,6 +341,13 @@ resource firewallPolicyRuleGroup 'Microsoft.Network/firewallPolicies/ruleCollect
               name: 'AllowAppConfig'
               protocols: [{ protocolType: 'Https', port: 443 }]
               targetFqdns: ['*.azconfig.io']
+              sourceAddresses: ['10.0.1.0/24']
+            }
+            {
+              ruleType: 'ApplicationRule'
+              name: 'AllowAzureManagement'
+              protocols: [{ protocolType: 'Https', port: 443 }]
+              targetFqdns: ['management.azure.com', '*.identity.azure.net']
               sourceAddresses: ['10.0.1.0/24']
             }
           ],

@@ -42,24 +42,24 @@ requires_approval {
 # App Configuration feature flags at job start.
 
 global_kill_switch_active {
-    data.kill_switches["agent-execution-enabled"] == false
+    data.data.kill_switches["agent-execution-enabled"] == false
 }
 
 agent_type_kill_switch_active {
     flag := sprintf("agent-%s-enabled", [input.agent_type])
-    data.kill_switches[flag] == false
+    data.data.kill_switches[flag] == false
 }
 
 # ── Capability manifest check ─────────────────────────────────────────────────
 
 tool_is_allowed_for_agent_type {
-    input.action_type in data.allowed_tools[input.agent_type]
+    input.action_type in data.data.allowed_tools[input.agent_type]
 }
 
 # ── High-risk action check ────────────────────────────────────────────────────
 
 is_high_risk_action {
-    input.action_type in data.high_risk_actions
+    input.action_type in data.data.high_risk_actions
 }
 
 # ── Path prefix enforcement ───────────────────────────────────────────────────
@@ -87,7 +87,7 @@ path_is_in_allowed_prefix {
 
 egress_destination_is_allowed {
     input.action_type in {"http_get", "network_call"}
-    some fqdn in data.allowed_egress_fqdns[input.agent_type]
+    some fqdn in data.data.allowed_egress_fqdns[input.agent_type]
     endswith(input.destination, fqdn)
 }
 

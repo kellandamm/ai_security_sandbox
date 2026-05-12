@@ -10,15 +10,16 @@ Tests cover:
   - is_enabled() convenience wrapper
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../app"))
 
 import json
 import time
-import pytest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock
 
+import pytest
 from kill_switch import KillSwitchClient, KillSwitchError
 
 
@@ -126,50 +127,64 @@ class TestActionTypeKillSwitch:
         return client
 
     def test_file_write_disabled_blocks(self):
-        client = self._make_multi_flag_client({
-            "agent-execution-enabled": True,
-            "file-write-enabled": False,
-        })
+        client = self._make_multi_flag_client(
+            {
+                "agent-execution-enabled": True,
+                "file-write-enabled": False,
+            }
+        )
         with pytest.raises(KillSwitchError) as exc_info:
             client.check(action_type="file_write")
         assert exc_info.value.flag_name == "file-write-enabled"
 
     def test_openai_calls_disabled_blocks(self):
-        client = self._make_multi_flag_client({
-            "agent-execution-enabled": True,
-            "openai-calls-enabled": False,
-        })
+        client = self._make_multi_flag_client(
+            {
+                "agent-execution-enabled": True,
+                "openai-calls-enabled": False,
+            }
+        )
         with pytest.raises(KillSwitchError) as exc_info:
             client.check(action_type="openai_call")
         assert exc_info.value.flag_name == "openai-calls-enabled"
 
     def test_network_egress_disabled_blocks_http_get(self):
-        client = self._make_multi_flag_client({
-            "agent-execution-enabled": True,
-            "network-egress-enabled": False,
-        })
+        client = self._make_multi_flag_client(
+            {
+                "agent-execution-enabled": True,
+                "network-egress-enabled": False,
+            }
+        )
         with pytest.raises(KillSwitchError) as exc_info:
             client.check(action_type="http_get")
         assert exc_info.value.flag_name == "network-egress-enabled"
 
     def test_unknown_action_type_not_blocked(self):
-        client = self._make_multi_flag_client({
-            "agent-execution-enabled": True,
-        })
-        client.check(action_type="some_future_action")  # no exception — unknown = not mapped
+        client = self._make_multi_flag_client(
+            {
+                "agent-execution-enabled": True,
+            }
+        )
+        client.check(
+            action_type="some_future_action"
+        )  # no exception — unknown = not mapped
 
 
 class TestFailClosed:
     def test_app_config_unreachable_blocks(self):
         client = _make_client()
-        client._client.get_configuration_setting.side_effect = Exception("Connection refused")
+        client._client.get_configuration_setting.side_effect = Exception(
+            "Connection refused"
+        )
 
         with pytest.raises(KillSwitchError):
             client.check()
 
     def test_app_config_auth_error_blocks(self):
         client = _make_client()
-        client._client.get_configuration_setting.side_effect = PermissionError("403 Forbidden")
+        client._client.get_configuration_setting.side_effect = PermissionError(
+            "403 Forbidden"
+        )
 
         with pytest.raises(KillSwitchError):
             client.check()

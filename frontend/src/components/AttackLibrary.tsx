@@ -51,10 +51,10 @@ export default function AttackLibrary({ onLaunch, isRunning }: Props) {
       <div className="panel-header">
         <div className="flex items-center gap-2">
           <Shield className="w-4 h-4 text-soc-red" />
-          <span className="font-semibold text-soc-text">Attack Library</span>
-          <span className="badge badge-gray">{ATTACK_TEMPLATES.length} payloads</span>
+          <span className="font-semibold text-soc-text">Guardrails Lab</span>
+          <span className="badge badge-gray">{ATTACK_TEMPLATES.length} adversarial scenarios</span>
         </div>
-        <span className="text-xs text-soc-muted">Click to expand · Launch to execute</span>
+        <span className="text-xs text-soc-muted">Fallback demo mode for exploit and policy validation</span>
       </div>
 
       <div className="flex-1 overflow-y-auto divide-y divide-soc-border">
@@ -167,7 +167,7 @@ export default function AttackLibrary({ onLaunch, isRunning }: Props) {
                       onClick={() => handleLaunch(t)}
                     >
                       <Play className="w-3.5 h-3.5" />
-                      {isRunning ? "Running…" : "Launch Attack"}
+                      {isRunning ? "Running..." : "Run Scenario"}
                     </button>
                   </div>
                 </div>

@@ -18,7 +18,6 @@ import time
 from typing import Any, Optional
 
 import requests
-
 from audit import AuditLogger
 from models.audit_event import ActionType, Outcome, PolicyDecision
 
@@ -31,6 +30,7 @@ POLICY_PATH = "/v1/data/agent/actions"
 
 class PolicyDenyError(Exception):
     """Raised when OPA returns allow=false."""
+
     def __init__(self, action: str, reason: str):
         self.action = action
         self.reason = reason
@@ -39,6 +39,7 @@ class PolicyDenyError(Exception):
 
 class ApprovalRequiredError(Exception):
     """Raised when OPA returns requires_approval=true."""
+
     def __init__(self, action: str, approvals: list[str]):
         self.action = action
         self.required_approvals = approvals
@@ -57,9 +58,13 @@ class OPAClient:
         self._auditor = auditor
         self._run_id = run_id
         self._agent_type = agent_type
-        self._deny_cache: dict[str, tuple[str, float]] = {}  # cache_key → (reason, expires)
+        self._deny_cache: dict[
+            str, tuple[str, float]
+        ] = {}  # cache_key → (reason, expires)
 
-    def _cache_key(self, action_type: str, path: Optional[str], destination: Optional[str]) -> str:
+    def _cache_key(
+        self, action_type: str, path: Optional[str], destination: Optional[str]
+    ) -> str:
         return f"{action_type}:{path or ''}:{destination or ''}"
 
     def authorize(

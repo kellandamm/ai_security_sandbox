@@ -4,19 +4,29 @@ An Azure-hosted AI agent sandbox that demonstrates **enterprise-grade containmen
 
 ---
 
+## Documentation
+
+- [Solution accelerator guide](docs/solution-accelerator-guide.md) — what the accelerator does, who it is for, and how the components work together.
+- [Testing guide](docs/testing-guide.md) — local validation, CI-style checks, and deployment smoke testing.
+- [Public release checklist](docs/public-release-checklist.md) — hygiene, secret review, repository settings, and release gates before public distribution.
+- [Demo playbook](DEMO_PLAYBOOK.md) — repeatable security demo flow for runtime controls, evidence, and SOC response.
+
+---
+
 ## Architecture
 
 ```
 Internet
     │
     ▼
+┌──────────────────────────────┐     ┌──────────────────────────────────────┐
+│  Static Website (Azure Blob) │     │ Azure API Management                │
+│  React SPA / SOC Console     │────▶│ rate limiting, JWT validation, CORS │
+└──────────────────────────────┘     └──────────────────┬───────────────────┘
+                                                        │ HTTPS
+                                                        ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│  Azure API Management (rate limiting, JWT validation)           │
-└────────────────────────┬────────────────────────────────────────┘
-                         │ VNet-internal only
-                         ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Container Apps Environment (VNet-injected, internal-only)      │
+│  Container Apps Environment (VNet-injected, public environment) │
 │                                                                 │
 │  ┌─────────────────────┐     ┌───────────────────────────────┐ │
 │  │  Orchestrator App   │────▶│  Agent Runner Job (ephemeral) │ │
@@ -29,11 +39,12 @@ Internet
          │                              │
          │ Private Endpoints            │ Private Endpoints
          ▼                              ▼
-┌──────────────────┐        ┌──────────────────────────────────┐
-│  Azure Key Vault │        │  Azure Storage (two accounts)    │
-│  Azure App Config│        │  • Workspace SA (ephemeral ADLS) │
-│  App Insights    │        │  • Audit SA (WORM, 365-day lock) │
-└──────────────────┘        └──────────────────────────────────┘
+┌──────────────────┐        ┌──────────────────────────────────────────────┐
+│  Azure Key Vault │        │  Azure Storage                               │
+│  Azure App Config│        │  • Workspace SA (ephemeral ADLS)             │
+│  App Insights    │        │  • Audit SA (WORM, 365-day lock)             │
+└──────────────────┘        │  • Frontend SA (static website for the SPA)  │
+                            └──────────────────────────────────────────────┘
          │
          ▼
 ┌──────────────────────────────────────────────────────────────┐
@@ -99,6 +110,7 @@ All rules from the article are implemented in `app/sandbox.py`:
 - **Azure API Management**: `rate-limit-by-key` (100 req/60s per agent-id) + `quota-by-key` (10k/day)
 - In-process token bucket (`rate_limiter.py`) as backstop — same 100/60s limit
 - Per-run **token budget** enforced by `TokenBudget` class — caps OpenAI spend per agent run
+- APIM is the intended public entry point for the backend APIs; the SPA is published separately as a static website
 
 ### 7. Capability Isolation
 - `capability_manifest.py` defines per-agent-type tool allowlists, egress FQDNs, token budgets, time limits
@@ -140,9 +152,9 @@ ai_security_sandbox/
 │   └── modules/
 │       ├── networking.bicep    # VNet, NSG, Firewall, DNS zones, Private Endpoints
 │       ├── security.bicep      # Managed Identities, Key Vault, RBAC
-│       ├── storage.bicep       # Ephemeral workspace SA + WORM audit SA
+│       ├── storage.bicep       # Ephemeral workspace SA + WORM audit SA + static website
 │       ├── monitoring.bicep    # Log Analytics, App Insights, Sentinel, analytics rules
-│       ├── compute.bicep       # ACR, Container Apps Env, Orchestrator App, Agent Job
+│       ├── compute.bicep       # ACR, Container Apps Env, orchestrator app, Agent Job
 │       ├── apim.bicep          # API Management (rate limiting, JWT, routing)
 │       ├── approvals.bicep     # Logic App HITL workflow
 │       └── kill_switch.bicep   # App Configuration + feature flags
@@ -176,7 +188,7 @@ ai_security_sandbox/
 │
 ├── .github/workflows/
 │   ├── ci.yml                  # Lint, unit tests, OPA check, Bicep lint, Docker build
-│   └── deploy.yml              # Bicep deploy → build/push images → push OPA bundle
+│   └── deploy.yml              # Bicep deploy → build/push images → publish SPA → push OPA bundle
 │
 └── scripts/
     └── bootstrap.sh            # One-shot OIDC setup for GitHub Actions
@@ -196,13 +208,15 @@ ai_security_sandbox/
 
 ```bash
 export AZURE_SUBSCRIPTION_ID="<your-sub>"
-export GITHUB_ORG="kellandamm"
+export GITHUB_ORG="<your-github-org>"
 export GITHUB_REPO="ai_security_sandbox"
 export ENVIRONMENT="dev"
 bash scripts/bootstrap.sh
 ```
 
 The script outputs 4 secrets to configure in GitHub Actions.
+
+You also need an `AAD_CLIENT_ID` secret for the application registration that APIM should trust as the API audience.
 
 ### 2. Deploy
 
@@ -219,9 +233,14 @@ git push origin main
 ```bash
 APIM_URL=$(az deployment sub show -n ai-sandbox-1 \
   --query properties.outputs.APIM_GATEWAY_URL.value -o tsv)
+FRONTEND_URL=$(az deployment sub show -n ai-sandbox-1 \
+  --query properties.outputs.FRONTEND_URL.value -o tsv)
 
-# Health check
-curl -s ${APIM_URL}/sandbox/health
+# Frontend smoke test
+curl -I ${FRONTEND_URL}
+
+# APIM policy smoke test
+curl -i ${APIM_URL}/sandbox/kill-switches
 
 # Start an agent run
 curl -X POST ${APIM_URL}/sandbox/runs \
@@ -234,6 +253,26 @@ curl -X POST ${APIM_URL}/sandbox/runs \
 curl ${APIM_URL}/sandbox/runs/<run_id> \
   -H "Authorization: Bearer <aad-token>"
 ```
+
+### 3b. End-to-end smoke test
+
+The repo includes a PowerShell smoke test that validates the production path from
+APIM inward with both unauthenticated and authenticated requests.
+
+```powershell
+pwsh ./scripts/smoke-test.ps1 `
+  -ApimUrl $APIM_URL `
+  -FrontendUrl $FRONTEND_URL `
+  -AadClientId <aad-client-id>
+```
+
+The smoke test checks:
+- unauthenticated APIM access returns `401`
+- authenticated `/kill-switches` returns `200`
+- `/runs` returns `202` and a `run_id`
+- the SSE stream emits at least one event
+- the run reaches `completed`
+- `/runs/{run_id}/timeline` returns recorded events
 
 ### 4. Verify security controls
 

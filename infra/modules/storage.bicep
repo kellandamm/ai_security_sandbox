@@ -10,6 +10,9 @@ param resourceToken string
 @description('Principal ID of the agent runner managed identity')
 param agentRunnerPrincipalId string
 
+@description('Principal ID of the deploying user/service principal (granted Storage Blob Data Contributor on the frontend SA)')
+param deployerPrincipalId string = ''
+
 @description('Subnet ID for private endpoints')
 param privateEndpointSubnetId string
 
@@ -169,6 +172,17 @@ resource agentRunnerAuditRole 'Microsoft.Authorization/roleAssignments@2022-04-0
   }
 }
 
+// Storage Blob Data Contributor on frontend SA — granted to the deploying user so the
+// postdeploy hook can upload static assets with --auth-mode login (no shared key needed).
+resource deployerFrontendRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(deployerPrincipalId)) {
+  name: guid(frontendSa.id, deployerPrincipalId, storageBlobDataContributorRoleId)
+  scope: frontendSa
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    principalId: deployerPrincipalId
+  }
+}
+
 // ─── Private Endpoints ────────────────────────────────────────────────────────
 
 resource workspacePe 'Microsoft.Network/privateEndpoints@2023-06-01' = {
@@ -233,9 +247,32 @@ resource auditDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@
   }
 }
 
+// ─── Frontend Static Website Storage ────────────────────────────────────────────
+// The SOC console is published as static assets instead of running behind ACA.
+
+resource frontendSa 'Microsoft.Storage/storageAccounts@2023-01-01' = {
+  name: 'st${resourceToken}web'
+  location: location
+  tags: tags
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    accessTier: 'Hot'
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: true
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+var frontendWebsiteUrl = reference(frontendSa.id, '2023-01-01').primaryEndpoints.web
+
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output workspaceStorageAccountName string = workspaceSa.name
 output workspaceStorageAccountId string = workspaceSa.id
 output auditStorageAccountName string = auditSa.name
 output auditStorageAccountId string = auditSa.id
+output frontendStorageAccountName string = frontendSa.name
+output frontendWebsiteUrl string = substring(frontendWebsiteUrl, 0, length(frontendWebsiteUrl) - 1)

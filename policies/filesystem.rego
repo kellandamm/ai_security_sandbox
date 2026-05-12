@@ -6,6 +6,7 @@ package agent.filesystem
 # Called as a secondary check — sandbox.py is the primary enforcement.
 
 import future.keywords.if
+import future.keywords.in
 
 default valid_path = false
 default valid_filename = false
@@ -16,7 +17,7 @@ valid_path if {
     path := input.path
     not contains(path, "..")           # traversal sequence
     not contains(path, "//")           # double slash
-    not contains(path, "\x00")         # null byte
+    not contains(path, "\u0000")       # null byte
     not startswith(path, "/etc")       # system config
     not startswith(path, "/proc")      # proc filesystem
     not startswith(path, "/sys")       # sysfs
@@ -35,7 +36,7 @@ valid_path if {
 valid_filename if {
     name := input.filename
     not startswith(name, ".")              # no hidden files
-    not contains(name, "\x00")            # no null bytes
+    not contains(name, "\u0000")          # no null bytes
     count(name) <= 255                    # length limit
     regex.match(`^[a-zA-Z0-9._\-]+$`, name)  # safe character set only
 }

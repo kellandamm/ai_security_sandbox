@@ -7,20 +7,20 @@ Tests cover:
   - Rule 7: Quota enforcement
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../app"))
 
-import pytest
-from unittest.mock import MagicMock, patch
 
+import pytest
 from sandbox import (
+    ForbiddenFileTypeError,
+    PathTraversalError,
+    QuotaExceededError,
+    WorkspaceQuota,
     canonicalize,
     validate_blob,
-    WorkspaceQuota,
-    PathTraversalError,
-    ForbiddenFileTypeError,
-    QuotaExceededError,
 )
 
 RUN_ID = "12345678-1234-1234-1234-123456789abc"
@@ -28,6 +28,7 @@ WRITE_PREFIX = f"/workspace/{RUN_ID}/write"
 
 
 # ── Rule 3: Path canonicalization ─────────────────────────────────────────────
+
 
 class TestCanonicalize:
     def test_valid_path_passes(self):
@@ -58,7 +59,9 @@ class TestCanonicalize:
 
     def test_path_not_matching_schema_rejected(self):
         with pytest.raises(PathTraversalError):
-            canonicalize(f"/workspace/{RUN_ID}/write/file name with spaces.txt", WRITE_PREFIX)
+            canonicalize(
+                f"/workspace/{RUN_ID}/write/file name with spaces.txt", WRITE_PREFIX
+            )
 
     def test_subdirectory_allowed(self):
         path = f"/workspace/{RUN_ID}/write/subdir/nested/output.txt"
@@ -73,9 +76,12 @@ class TestCanonicalize:
 
 # ── Rule 6: File type validation ──────────────────────────────────────────────
 
+
 class TestValidateBlob:
     def test_valid_json_file(self):
-        validate_blob("result.json", b'{"key": "value"}', "application/json")  # no exception
+        validate_blob(
+            "result.json", b'{"key": "value"}', "application/json"
+        )  # no exception
 
     def test_valid_text_file(self):
         validate_blob("report.txt", b"Analysis complete.", "text/plain")
@@ -96,7 +102,9 @@ class TestValidateBlob:
 
     def test_shebang_rejected(self):
         with pytest.raises(ForbiddenFileTypeError):
-            validate_blob("script.txt", b"#!/usr/bin/python3\nprint('hi')", "text/plain")
+            validate_blob(
+                "script.txt", b"#!/usr/bin/python3\nprint('hi')", "text/plain"
+            )
 
     def test_null_byte_in_content_rejected(self):
         with pytest.raises(ForbiddenFileTypeError):
@@ -122,6 +130,7 @@ class TestValidateBlob:
 
 
 # ── Rule 7: Quota enforcement ─────────────────────────────────────────────────
+
 
 class TestWorkspaceQuota:
     def test_within_quota_allowed(self):

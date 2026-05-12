@@ -4,15 +4,20 @@ export type ActionType =
   | "file_read"
   | "file_write"
   | "file_delete"
+  | "network_call"
   | "openai_call"
   | "http_get"
   | "http_post"
   | "kill_switch_check"
   | "policy_check"
-  | "approval_request";
+  | "approval_request"
+  | "approval_response"
+  | "run_start"
+  | "run_complete"
+  | "run_abort";
 
 export type PolicyDecision = "allow" | "deny" | "requires_approval";
-export type Outcome = "success" | "failure" | "blocked" | "pending_approval";
+export type Outcome = "success" | "failure" | "blocked" | "timeout";
 
 export interface AuditEvent {
   event_id: string;
@@ -34,8 +39,9 @@ export interface AuditEvent {
 // ── Agent run ─────────────────────────────────────────────────────────────────
 
 export type RunStatus =
-  | "pending"
+  | "queued"
   | "running"
+  | "awaiting_approval"
   | "completed"
   | "failed"
   | "killed";
@@ -108,6 +114,21 @@ export interface AttackTemplate {
   color: string;
 }
 
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  industry: string;
+  description: string;
+  outcomeLabel: string;
+  agentType: "data-analyst" | "web-researcher";
+  task: string;
+  output: string;
+  sampleInputs: string[];
+  acceptedFileTypes?: string;
+  highlights: string[];
+  ctaLabel: string;
+}
+
 // ── SSE ───────────────────────────────────────────────────────────────────────
 
 export type SSEMessage =
@@ -122,4 +143,12 @@ export interface TimelineResponse {
   events: AuditEvent[];
   kql_query: string;
   source: "log_analytics" | "local_cache";
+}
+
+export interface AlertsResponse {
+  alerts: SentinelAlert[];
+}
+
+export interface KillSwitchesResponse {
+  flags: KillSwitch[];
 }

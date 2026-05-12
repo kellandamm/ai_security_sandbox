@@ -13,12 +13,19 @@ param apimSubnetId string
 @description('Log Analytics workspace resource ID')
 param logAnalyticsWorkspaceId string
 
-@description('Backend Container App URL')
+@description('Backend Container App URL (orchestrator)')
 param backendAppUrl string
 
 @description('Azure AD tenant ID for JWT validation')
 param aadTenantId string
 
+@description('Azure AD app client ID (used as the token audience: api://<clientId>)')
+param aadClientId string
+
+@description('Publisher email for APIM portal notifications')
+param publisherEmail string
+
+var backendHost = replace(replace(backendAppUrl, 'http://', ''), 'https://', '')
 // ─── API Management ───────────────────────────────────────────────────────────
 
 resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
@@ -33,9 +40,9 @@ resource apim 'Microsoft.ApiManagement/service@2023-05-01-preview' = {
     type: 'SystemAssigned'   // for Key Vault cert retrieval
   }
   properties: {
-    publisherEmail: 'admin@example.com'
+    publisherEmail: publisherEmail
     publisherName: 'AI Security Sandbox'
-    virtualNetworkType: 'Internal'
+    virtualNetworkType: 'External'    // public gateway IP; backends stay internal
     virtualNetworkConfiguration: {
       subnetResourceId: apimSubnetId
     }
@@ -50,28 +57,60 @@ resource apimDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [
-      { category: 'GatewayLogs'; enabled: true }
-      { category: 'WebSocketConnectionLogs'; enabled: true }
+      {
+        category: 'GatewayLogs'
+        enabled: true
+      }
+      {
+        category: 'WebSocketConnectionLogs'
+        enabled: true
+      }
     ]
     metrics: [
-      { category: 'AllMetrics'; enabled: true }
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
     ]
   }
 }
 
-// ─── Logger for request/response audit ───────────────────────────────────────
+// ─── Named Values ─────────────────────────────────────────────────────────────
+// The JWT policy XML uses {{aadTenantId}} — APIM resolves this at request time
+// via the named-value store. Without this resource the policy URL stays a literal
+// "{{aadTenantId}}" string and every JWT validation call will fail with a 401.
 
-resource apimLogger 'Microsoft.ApiManagement/service/loggers@2023-05-01-preview' = {
-  name: 'log-analytics-logger'
+resource namedValueTenantId 'Microsoft.ApiManagement/service/namedValues@2023-05-01-preview' = {
+  name: 'aadTenantId'
   parent: apim
   properties: {
-    loggerType: 'azureMonitor'
-    isBuffered: false
-    resourceId: logAnalyticsWorkspaceId
+    displayName: 'aadTenantId'
+    value: !empty(aadTenantId) ? aadTenantId : 'NOT_CONFIGURED'
+    secret: false
   }
 }
 
-// ─── Backend pointing to Container App orchestrator ───────────────────────────
+resource namedValueClientId 'Microsoft.ApiManagement/service/namedValues@2023-05-01-preview' = {
+  name: 'aadClientId'
+  parent: apim
+  properties: {
+    displayName: 'aadClientId'
+    value: !empty(aadClientId) ? aadClientId : 'NOT_CONFIGURED'
+    secret: false
+  }
+}
+
+resource namedValueBackendHost 'Microsoft.ApiManagement/service/namedValues@2023-05-01-preview' = {
+  name: 'backendHost'
+  parent: apim
+  properties: {
+    displayName: 'backendHost'
+    value: backendHost
+    secret: false
+  }
+}
+
+// ─── Backend — orchestrator ───────────────────────────────────────────────────
 
 resource backend 'Microsoft.ApiManagement/service/backends@2023-05-01-preview' = {
   name: 'orchestrator-backend'
@@ -80,8 +119,8 @@ resource backend 'Microsoft.ApiManagement/service/backends@2023-05-01-preview' =
     url: backendAppUrl
     protocol: 'http'
     tls: {
-      validateCertificateChain: true
-      validateCertificateName: true
+      validateCertificateChain: false
+      validateCertificateName: false
     }
   }
 }
@@ -95,20 +134,40 @@ resource api 'Microsoft.ApiManagement/service/apis@2023-05-01-preview' = {
     displayName: 'AI Security Sandbox API'
     description: 'Sandboxed AI agent execution with full security controls'
     path: 'sandbox'
+    serviceUrl: backendAppUrl
     protocols: ['https']
-    subscriptionRequired: true
-    subscriptionKeyParameterNames: {
-      header: 'Ocp-Apim-Subscription-Key'
-      query: 'subscription-key'
-    }
+    subscriptionRequired: false
   }
 }
+
+// Catch-all operations — one per HTTP method with a path template parameter.
+// APIM requires explicit methods; wildcard method '*' cannot coexist with others.
+var httpMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']
+
+resource catchAllOperations 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = [for method in httpMethods: {
+  name: 'catch-all-${toLower(method)}'
+  parent: api
+  properties: {
+    displayName: '${method} catch-all'
+    method: method
+    urlTemplate: '/{*path}'
+    templateParameters: [
+      {
+        name: 'path'
+        required: true
+        type: 'string'
+      }
+    ]
+    description: 'Forwards ${method} requests to the orchestrator backend'
+  }
+}]
 
 // ─── Global API Policy — rate limiting + JWT validation + correlation ─────────
 
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-preview' = {
   name: 'policy'
   parent: api
+  dependsOn: [namedValueTenantId, namedValueClientId, namedValueBackendHost]   // named values must exist before policy is applied
   properties: {
     format: 'xml'
     value: '''
@@ -117,35 +176,63 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
     <base />
 
     <!-- Correlation ID: generate if not provided, propagate throughout -->
-    <set-variable name="correlationId" value="@(context.Request.Headers.GetValueOrDefault("X-Correlation-ID", Guid.NewGuid().ToString()))" />
+    <set-variable name="correlationId" value="@(context.Request.Headers.GetValueOrDefault(&quot;X-Correlation-ID&quot;, Guid.NewGuid().ToString()))" />
     <set-header name="X-Correlation-ID" exists-action="override">
       <value>@((string)context.Variables["correlationId"])</value>
     </set-header>
 
-    <!-- JWT validation: require valid Azure AD bearer token -->
-    <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized: valid Azure AD token required">
-      <openid-config url="https://login.microsoftonline.com/{{aadTenantId}}/v2.0/.well-known/openid-configuration" />
-      <required-claims>
-        <claim name="aud" match="any">
-          <value>api://ai-security-sandbox</value>
-        </claim>
-      </required-claims>
-    </validate-jwt>
+    <!-- CORS for the static frontend and local Vite dev server -->
+    <cors allow-credentials="false">
+      <allowed-origins>
+        <origin>*</origin>
+      </allowed-origins>
+      <allowed-methods preflight-result-max-age="300">
+        <method>GET</method>
+        <method>POST</method>
+        <method>PUT</method>
+        <method>DELETE</method>
+        <method>OPTIONS</method>
+      </allowed-methods>
+      <allowed-headers>
+        <header>*</header>
+      </allowed-headers>
+      <expose-headers>
+        <header>X-Correlation-ID</header>
+        <header>X-RateLimit-Remaining</header>
+        <header>Retry-After</header>
+      </expose-headers>
+    </cors>
+
+    <!-- JWT validation: require valid Azure AD bearer token (skipped when AAD not configured) -->
+    <choose>
+      <when condition="@(&quot;{{aadClientId}}&quot; != &quot;NOT_CONFIGURED&quot; &amp;&amp; !context.Request.Url.Path.EndsWith(&quot;/health&quot;))">
+        <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized: valid Azure AD token required">
+          <openid-config url="https://login.microsoftonline.com/{{aadTenantId}}/v2.0/.well-known/openid-configuration" />
+          <required-claims>
+            <claim name="aud" match="any">
+              <value>api://{{aadClientId}}</value>
+              <value>{{aadClientId}}</value>
+            </claim>
+          </required-claims>
+        </validate-jwt>
+      </when>
+    </choose>
+
+    <set-variable name="subscriptionCounterKey" value="@(context.Subscription != null ? context.Subscription.Id : &quot;anonymous&quot;)" />
+    <set-variable name="rateLimitKey" value="@(context.Request.Headers.ContainsKey(&quot;X-Agent-ID&quot;) ? context.Request.Headers.GetValueOrDefault(&quot;X-Agent-ID&quot;, &quot;&quot;) : (string)context.Variables[&quot;subscriptionCounterKey&quot;])" />
 
     <!-- Rate limiting: 100 calls per 60 seconds per agent-id header -->
     <rate-limit-by-key calls="100" renewal-period="60"
-      counter-key="@(context.Request.Headers.GetValueOrDefault("X-Agent-ID", context.Subscription.Id))"
+      counter-key="@((string)context.Variables[&quot;rateLimitKey&quot;])"
       increment-condition="@(true)"
       retry-after-header-name="Retry-After"
       remaining-calls-header-name="X-RateLimit-Remaining" />
 
     <!-- Daily quota: 10,000 calls per subscription key per day -->
     <quota-by-key calls="10000" renewal-period="86400"
-      counter-key="@(context.Subscription.Id)"
+      counter-key="@((string)context.Variables[&quot;subscriptionCounterKey&quot;])"
       increment-condition="@(true)" />
 
-    <!-- Route to backend -->
-    <set-backend-service backend-id="orchestrator-backend" />
   </inbound>
 
   <backend>
@@ -154,16 +241,13 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
 
   <outbound>
     <base />
-    <!-- Propagate correlation ID back to caller -->
-    <set-header name="X-Correlation-ID" exists-action="override">
-      <value>@((string)context.Variables["correlationId"])</value>
-    </set-header>
+    <!-- Backend routing is resolved from the API serviceUrl/backend resource -->
   </outbound>
 
   <on-error>
     <base />
     <set-header name="X-Correlation-ID" exists-action="override">
-      <value>@((string)context.Variables["correlationId"])</value>
+      <value>@(context.Variables.ContainsKey("correlationId") ? (string)context.Variables["correlationId"] : context.RequestId.ToString())</value>
     </set-header>
   </on-error>
 </policies>
@@ -193,7 +277,11 @@ resource opGetRun 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-pr
     urlTemplate: '/runs/{runId}'
     description: 'Poll the status of a specific run'
     templateParameters: [
-      { name: 'runId'; type: 'string'; required: true }
+      {
+        name: 'runId'
+        type: 'string'
+        required: true
+      }
     ]
   }
 }
@@ -207,28 +295,126 @@ resource opDeleteRun 'Microsoft.ApiManagement/service/apis/operations@2023-05-01
     urlTemplate: '/runs/{runId}'
     description: 'Emergency kill switch for a specific run'
     templateParameters: [
-      { name: 'runId'; type: 'string'; required: true }
+      {
+        name: 'runId'
+        type: 'string'
+        required: true
+      }
     ]
   }
 }
 
-// ─── Product ──────────────────────────────────────────────────────────────────
-
-resource product 'Microsoft.ApiManagement/service/products@2023-05-01-preview' = {
-  name: 'ai-agent-sandbox'
-  parent: apim
+resource opStreamRun 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'stream-run'
+  parent: api
   properties: {
-    displayName: 'AI Agent Sandbox'
-    description: 'Subscription required for sandbox API access'
-    state: 'published'
-    subscriptionRequired: true
-    approvalRequired: true         // human must approve new subscriptions
+    displayName: 'Stream Run Audit Events (SSE)'
+    method: 'GET'
+    urlTemplate: '/stream/runs/{runId}'
+    description: 'Server-sent events stream of real-time audit events for a run'
+    templateParameters: [
+      {
+        name: 'runId'
+        type: 'string'
+        required: true
+      }
+    ]
   }
 }
 
-resource productApi 'Microsoft.ApiManagement/service/products/apis@2023-05-01-preview' = {
-  name: api.name
-  parent: product
+// Disable response buffering so SSE frames are flushed immediately to the client.
+resource opStreamRunPolicy 'Microsoft.ApiManagement/service/apis/operations/policies@2023-05-01-preview' = {
+  name: 'policy'
+  parent: opStreamRun
+  properties: {
+    format: 'xml'
+    value: '''
+<policies>
+  <inbound><base /></inbound>
+  <backend>
+    <forward-request buffer-response="false" />
+  </backend>
+  <outbound><base /></outbound>
+  <on-error><base /></on-error>
+</policies>
+'''
+  }
+}
+
+resource opGetTimeline 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'get-timeline'
+  parent: api
+  properties: {
+    displayName: 'Get Run Timeline'
+    method: 'GET'
+    urlTemplate: '/runs/{runId}/timeline'
+    description: 'Retrieve the ordered list of audit events for a completed or active run'
+    templateParameters: [
+      {
+        name: 'runId'
+        type: 'string'
+        required: true
+      }
+    ]
+  }
+}
+
+resource opApproveRun 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'approve-run'
+  parent: api
+  properties: {
+    displayName: 'Approve HITL Action'
+    method: 'POST'
+    urlTemplate: '/runs/{runId}/approve'
+    description: 'Human-in-the-loop approval callback: allow or deny a held agent action'
+    templateParameters: [
+      {
+        name: 'runId'
+        type: 'string'
+        required: true
+      }
+    ]
+  }
+}
+
+resource opGetAlerts 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'get-alerts'
+  parent: api
+  properties: {
+    displayName: 'Get Active Security Alerts'
+    method: 'GET'
+    urlTemplate: '/alerts'
+    description: 'List security alerts raised across all recent runs (SOC console feed)'
+  }
+}
+
+resource opGetKillSwitches 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'get-kill-switches'
+  parent: api
+  properties: {
+    displayName: 'List Kill Switches'
+    method: 'GET'
+    urlTemplate: '/kill-switches'
+    description: 'List all App Configuration feature flags used as kill switches'
+  }
+}
+
+resource opPutKillSwitch 'Microsoft.ApiManagement/service/apis/operations@2023-05-01-preview' = {
+  name: 'put-kill-switch'
+  parent: api
+  properties: {
+    displayName: 'Toggle Kill Switch'
+    method: 'PUT'
+    urlTemplate: '/kill-switches/{flagName}'
+    description: 'Enable or disable a named kill-switch flag in App Configuration'
+    templateParameters: [
+      {
+        name: 'flagName'
+        type: 'string'
+        required: true
+      }
+    ]
+  }
 }
 
 // ─── Outputs ──────────────────────────────────────────────────────────────────

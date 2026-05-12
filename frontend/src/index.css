@@ -7,6 +7,10 @@
     box-sizing: border-box;
   }
 
+  :root {
+    color-scheme: light;
+  }
+
   html,
   body,
   #root {
@@ -16,12 +20,16 @@
   }
 
   body {
-    background-color: #0a0e1a;
-    color: #e2e8f0;
-    font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
-    font-size: 13px;
+    background:
+      radial-gradient(circle at top left, rgba(37, 99, 235, 0.08), transparent 24%),
+      radial-gradient(circle at top right, rgba(8, 145, 178, 0.08), transparent 20%),
+      linear-gradient(180deg, #ffffff 0%, #f8fafc 42%, #f1f5f9 100%);
+    color: #0f172a;
+    font-family: "Aptos", "Segoe UI Variable", "Bahnschrift", sans-serif;
+    font-size: 14px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   /* Custom scrollbars */
@@ -30,29 +38,31 @@
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: #0f1629;
+    background: #e2e8f0;
   }
   ::-webkit-scrollbar-thumb {
-    background: #1e2d4a;
+    background: #94a3b8;
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #3b82f6;
+    background: #2563eb;
   }
 
   /* Selection */
   ::selection {
-    background-color: rgba(59, 130, 246, 0.3);
+    background-color: rgba(37, 99, 235, 0.18);
   }
 }
 
 @layer components {
   .panel {
-    @apply bg-soc-panel border border-soc-border rounded-lg;
+    @apply rounded-3xl border border-soc-border backdrop-blur-xl;
+    background-color: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
   }
 
   .panel-header {
-    @apply px-4 py-3 border-b border-soc-border flex items-center justify-between;
+    @apply flex items-center justify-between border-b border-soc-border px-4 py-3;
   }
 
   .badge {
@@ -60,47 +70,47 @@
   }
 
   .badge-red {
-    @apply badge bg-red-500/20 text-red-400 border border-red-500/30;
+    @apply badge bg-red-50 text-red-700 border border-red-200;
   }
 
   .badge-orange {
-    @apply badge bg-orange-500/20 text-orange-400 border border-orange-500/30;
+    @apply badge bg-orange-50 text-orange-700 border border-orange-200;
   }
 
   .badge-yellow {
-    @apply badge bg-yellow-500/20 text-yellow-400 border border-yellow-500/30;
+    @apply badge bg-amber-50 text-amber-700 border border-amber-200;
   }
 
   .badge-green {
-    @apply badge bg-green-500/20 text-green-400 border border-green-500/30;
+    @apply badge bg-green-50 text-green-700 border border-green-200;
   }
 
   .badge-blue {
-    @apply badge bg-blue-500/20 text-blue-400 border border-blue-500/30;
+    @apply badge bg-blue-50 text-blue-700 border border-blue-200;
   }
 
   .badge-gray {
-    @apply badge bg-slate-500/20 text-slate-400 border border-slate-500/30;
+    @apply badge bg-slate-100 text-slate-700 border border-slate-200;
   }
 
   .btn {
-    @apply inline-flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-all duration-150 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply btn bg-soc-blue hover:bg-blue-500 text-white;
+    @apply btn border border-blue-700 bg-soc-blue text-white hover:bg-blue-700;
   }
 
   .btn-danger {
-    @apply btn bg-red-600 hover:bg-red-500 text-white;
+    @apply btn bg-red-600 text-white hover:bg-red-500;
   }
 
   .btn-ghost {
-    @apply btn bg-transparent hover:bg-soc-accent text-soc-muted hover:text-soc-text border border-soc-border;
+    @apply btn border border-soc-border bg-white text-soc-muted hover:bg-soc-accent hover:text-soc-text;
   }
 
   .event-row {
-    @apply flex items-start gap-3 py-2 px-3 hover:bg-soc-accent/30 rounded transition-colors;
+    @apply flex items-start gap-3 py-2 px-3 hover:bg-soc-accent rounded transition-colors;
   }
 
   .log-line {
@@ -130,6 +140,44 @@
   .pulse-dot-yellow {
     @apply pulse-dot bg-soc-yellow;
   }
+
+  .app-shell {
+    background:
+      radial-gradient(circle at 20% 0%, rgba(37, 99, 235, 0.08), transparent 30%),
+      radial-gradient(circle at 100% 0%, rgba(8, 145, 178, 0.08), transparent 24%);
+  }
+
+  .hero-panel {
+    @apply rounded-[28px] border border-soc-border bg-white px-6 py-6 shadow-[0_24px_80px_rgba(15,23,42,0.08)];
+  }
+
+  .insight-card {
+    @apply rounded-2xl border border-soc-border bg-slate-50 px-4 py-4;
+  }
+
+  .workflow-card {
+    @apply relative overflow-hidden;
+  }
+
+  .workflow-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.04), transparent 36%, rgba(8, 145, 178, 0.03));
+    pointer-events: none;
+  }
+
+  .stat-chip {
+    @apply inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.2em] text-blue-700;
+  }
+
+  .subtle-grid {
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
 }
 
 /* Terminal-style blinking cursor */
@@ -138,10 +186,21 @@
   50% { opacity: 0; }
 }
 
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .cursor-blink::after {
   content: "█";
   animation: blink 1s step-start infinite;
-  color: #3b82f6;
+  color: #1d4ed8;
 }
 
 /* Scanline effect for SOC aesthetic */
@@ -150,8 +209,12 @@
     0deg,
     transparent,
     transparent 2px,
-    rgba(0, 0, 0, 0.03) 2px,
-    rgba(0, 0, 0, 0.03) 4px
+    rgba(15, 23, 42, 0.015) 2px,
+    rgba(15, 23, 42, 0.015) 4px
   );
   pointer-events: none;
+}
+
+.animate-rise {
+  animation: rise 0.55s ease-out both;
 }

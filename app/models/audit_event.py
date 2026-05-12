@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+
 from pydantic import BaseModel, Field
-import uuid
 
 
 class ActionType(str, Enum):
@@ -41,24 +41,26 @@ class Outcome(str, Enum):
 class AuditEvent(BaseModel):
     """Structured audit event — every agent action emits one of these."""
 
+    event_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     run_id: str
     agent_type: str
     action_type: ActionType
     policy_decision: PolicyDecision = PolicyDecision.PENDING
-    path: Optional[str] = None           # canonicalized virtual path
-    destination: Optional[str] = None    # FQDN for network calls
-    content_hash: Optional[str] = None   # SHA-256 of content written/read
-    token_count: Optional[int] = None    # for openai_call actions
+    path: str | None = None  # canonicalized virtual path
+    destination: str | None = None  # FQDN for network calls
+    content_hash: str | None = None  # SHA-256 of content written/read
+    token_count: int | None = None  # for openai_call actions
     risk_score: float = 0.0
     outcome: Outcome = Outcome.SUCCESS
-    error_code: Optional[str] = None
+    error_code: str | None = None
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_log_analytics_row(self) -> dict:
-        """Serialize for Log Analytics DCR ingestion (camelCase TimeGenerated required)."""
+        """Serialize for Log Analytics DCR ingestion."""
         return {
             "TimeGenerated": self.timestamp.isoformat(),
+            "event_id": self.event_id,
             "run_id": self.run_id,
             "agent_type": self.agent_type,
             "action_type": self.action_type.value,

@@ -21,11 +21,10 @@ import posixpath
 import re
 from typing import Optional
 
+from audit import AuditLogger
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
-
-from audit import AuditLogger
 from models.audit_event import ActionType, Outcome, PolicyDecision
 
 logger = logging.getLogger(__name__)
@@ -36,16 +35,16 @@ WORKSPACE_STORAGE_ACCOUNT = os.environ.get("WORKSPACE_STORAGE_ACCOUNT", "")
 AUDIT_STORAGE_ACCOUNT = os.environ.get("AUDIT_STORAGE_ACCOUNT", "")
 
 ALLOWED_CONTENT_TYPES = {"text/plain", "application/json", "text/csv", "text/markdown"}
-MAX_BLOB_SIZE_BYTES = 50 * 1024 * 1024   # 50 MB per file  (Rule 7)
-MAX_FILES_PER_RUN = 100                   # Rule 7
+MAX_BLOB_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB per file  (Rule 7)
+MAX_FILES_PER_RUN = 100  # Rule 7
 MAX_TOTAL_BYTES_PER_RUN = 500 * 1024 * 1024  # 500 MB per run
 
 # Magic bytes for dangerous file types to reject (Rule 6)
 _FORBIDDEN_MAGIC = [
-    b"\x7fELF",        # ELF binary
-    b"MZ",             # PE/Windows binary
+    b"\x7fELF",  # ELF binary
+    b"MZ",  # PE/Windows binary
     b"\xca\xfe\xba\xbe",  # Mach-O fat binary
-    b"#!",             # shebang (scripts)
+    b"#!",  # shebang (scripts)
     b"\x50\x4b\x03\x04",  # ZIP / JAR / DOCX etc
 ]
 
@@ -58,23 +57,29 @@ _VALID_VIRTUAL_PATH_RE = re.compile(
 
 # ── Exceptions ─────────────────────────────────────────────────────────────────
 
+
 class SandboxError(Exception):
     """Base for all sandbox violations."""
+
 
 class PathTraversalError(SandboxError):
     """Raised when a path escapes its allowed prefix (Rule 3)."""
 
+
 class ForbiddenFileTypeError(SandboxError):
     """Raised for disallowed content types or magic bytes (Rule 6)."""
 
+
 class QuotaExceededError(SandboxError):
     """Raised when a quota limit is reached (Rule 7)."""
+
 
 class ReadOnlyPathError(SandboxError):
     """Raised when a write is attempted on a read-only path (Rule 2)."""
 
 
 # ── Path canonicalization ──────────────────────────────────────────────────────
+
 
 def canonicalize(raw_path: str, allowed_prefix: str) -> str:
     """
@@ -95,19 +100,25 @@ def canonicalize(raw_path: str, allowed_prefix: str) -> str:
     normalized = posixpath.normpath("/" + raw_path.lstrip("/"))
 
     # After normalization, verify it starts with the allowed prefix
-    if not normalized.startswith(allowed_prefix.rstrip("/") + "/") and normalized != allowed_prefix:
+    if (
+        not normalized.startswith(allowed_prefix.rstrip("/") + "/")
+        and normalized != allowed_prefix
+    ):
         raise PathTraversalError(
             f"Path '{normalized}' escapes sandbox prefix '{allowed_prefix}'"
         )
 
     # Belt-and-suspenders: validate full virtual path shape (Rule 8)
     if not _VALID_VIRTUAL_PATH_RE.match(normalized):
-        raise PathTraversalError(f"Path '{normalized}' does not match allowed virtual path schema")
+        raise PathTraversalError(
+            f"Path '{normalized}' does not match allowed virtual path schema"
+        )
 
     return normalized
 
 
 # ── File type validation ───────────────────────────────────────────────────────
+
 
 def validate_blob(blob_name: str, content: bytes, content_type: str) -> None:
     """
@@ -128,7 +139,9 @@ def validate_blob(blob_name: str, content: bytes, content_type: str) -> None:
 
     # Size limit
     if len(content) > MAX_BLOB_SIZE_BYTES:
-        raise QuotaExceededError(f"File too large: {len(content)} bytes (max {MAX_BLOB_SIZE_BYTES})")
+        raise QuotaExceededError(
+            f"File too large: {len(content)} bytes (max {MAX_BLOB_SIZE_BYTES})"
+        )
 
     # Magic byte scan — reject binaries and scripts
     for magic in _FORBIDDEN_MAGIC:
@@ -141,6 +154,7 @@ def validate_blob(blob_name: str, content: bytes, content_type: str) -> None:
 
 
 # ── Workspace quota tracker ────────────────────────────────────────────────────
+
 
 class WorkspaceQuota:
     """Rule 7: Track and enforce file count and total size limits per run."""
@@ -157,7 +171,8 @@ class WorkspaceQuota:
         new_total = self._total_bytes + len(content)
         if new_total > MAX_TOTAL_BYTES_PER_RUN:
             raise QuotaExceededError(
-                f"Total size quota exceeded: {new_total}/{MAX_TOTAL_BYTES_PER_RUN} bytes"
+                "Total size quota exceeded: "
+                f"{new_total}/{MAX_TOTAL_BYTES_PER_RUN} bytes"
             )
         self._file_count += 1
         self._total_bytes = new_total
@@ -172,6 +187,7 @@ class WorkspaceQuota:
 
 
 # ── Ephemeral workspace context manager ───────────────────────────────────────
+
 
 class EphemeralWorkspace:
     """
@@ -207,7 +223,9 @@ class EphemeralWorkspace:
             client = self._workspace_blob_client()
             container = client.get_container_client(self._write_container)
             container.create_container(metadata={"run_id": self.run_id, "ttl": "86400"})
-            logger.info("Created ephemeral workspace container: %s", self._write_container)
+            logger.info(
+                "Created ephemeral workspace container: %s", self._write_container
+            )
         except Exception as exc:
             logger.warning("Container may already exist: %s", exc)
         self._auditor.log(
@@ -222,16 +240,24 @@ class EphemeralWorkspace:
             client = self._workspace_blob_client()
             container = client.get_container_client(self._write_container)
             container.delete_container()
-            logger.info("Deleted ephemeral workspace container: %s", self._write_container)
+            logger.info(
+                "Deleted ephemeral workspace container: %s", self._write_container
+            )
         except Exception as exc:
-            logger.error("Failed to delete workspace container %s: %s", self._write_container, exc)
+            logger.error(
+                "Failed to delete workspace container %s: %s",
+                self._write_container,
+                exc,
+            )
         finally:
             outcome = Outcome.FAILURE if exc_type else Outcome.SUCCESS
             self._auditor.log(ActionType.RUN_COMPLETE, outcome=outcome)
 
     # ── Public file operations (Rule 8: virtual paths only) ──────────────────
 
-    def write_file(self, virtual_path: str, content: bytes, content_type: str = "text/plain") -> str:
+    def write_file(
+        self, virtual_path: str, content: bytes, content_type: str = "text/plain"
+    ) -> str:
         """
         Write a file to the writable sandbox area.
 
@@ -284,7 +310,9 @@ class EphemeralWorkspace:
         content = b""
         try:
             client = self._workspace_blob_client()
-            blob = client.get_blob_client(container=self._write_container, blob=blob_name)
+            blob = client.get_blob_client(
+                container=self._write_container, blob=blob_name
+            )
             content = blob.download_blob().readall()
         except AzureError as exc:
             self._auditor.log(
@@ -314,7 +342,9 @@ class EphemeralWorkspace:
 
         try:
             client = self._workspace_blob_client()
-            blob = client.get_blob_client(container=self._write_container, blob=blob_name)
+            blob = client.get_blob_client(
+                container=self._write_container, blob=blob_name
+            )
             blob.delete_blob()
         except AzureError as exc:
             self._auditor.log(

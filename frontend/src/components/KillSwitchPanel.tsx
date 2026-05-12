@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { Zap, Power, RefreshCw, ShieldOff } from "lucide-react";
-import { KillSwitch } from "../types";
+import { KillSwitch, KillSwitchesResponse } from "../types";
 import clsx from "clsx";
 
 interface Props {
   apiBase?: string;
+  getAuthHeaders?: () => Promise<Record<string, string>>;
 }
 
 const SCOPE_LABELS: Record<string, string> = {
@@ -64,7 +65,7 @@ const DEFAULT_SWITCHES: KillSwitch[] = [
   },
 ];
 
-export default function KillSwitchPanel({ apiBase = "/api" }: Props) {
+export default function KillSwitchPanel({ apiBase = "/api", getAuthHeaders }: Props) {
   const [switches, setSwitches] = useState<KillSwitch[]>(DEFAULT_SWITCHES);
   const [loading, setLoading] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
@@ -73,17 +74,18 @@ export default function KillSwitchPanel({ apiBase = "/api" }: Props) {
   const fetchSwitches = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`${apiBase}/kill-switches`);
+      const authHeaders = getAuthHeaders ? await getAuthHeaders() : {};
+      const resp = await fetch(`${apiBase}/kill-switches`, { headers: authHeaders });
       if (resp.ok) {
-        const data = (await resp.json()) as KillSwitch[];
-        if (data.length > 0) setSwitches(data);
+        const data = (await resp.json()) as KillSwitchesResponse;
+        if (data.flags.length > 0) setSwitches(data.flags);
       }
     } catch {
       // keep defaults
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, getAuthHeaders]);
 
   useEffect(() => {
     fetchSwitches();
@@ -93,9 +95,10 @@ export default function KillSwitchPanel({ apiBase = "/api" }: Props) {
     setToggling(sw.name);
     const newEnabled = !sw.enabled;
     try {
+      const authHeaders = getAuthHeaders ? await getAuthHeaders() : {};
       const resp = await fetch(`${apiBase}/kill-switches/${sw.name}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...authHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: newEnabled }),
       });
 

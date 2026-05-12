@@ -19,14 +19,13 @@ from typing import Callable, Optional
 import requests
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, BlobClient
-
-from models.audit_event import AuditEvent, ActionType, Outcome, PolicyDecision
+from azure.storage.blob import BlobClient, BlobServiceClient
+from models.audit_event import ActionType, AuditEvent, Outcome, PolicyDecision
 
 logger = logging.getLogger(__name__)
 
 # ── Configuration from environment ────────────────────────────────────────────
-DCE_ENDPOINT = os.environ.get("DCE_ENDPOINT", "")          # Data Collection Endpoint
+DCE_ENDPOINT = os.environ.get("DCE_ENDPOINT", "")  # Data Collection Endpoint
 DCR_IMMUTABLE_ID = os.environ.get("DCR_IMMUTABLE_ID", "")  # Data Collection Rule ID
 AUDIT_STORAGE_ACCOUNT = os.environ.get("AUDIT_STORAGE_ACCOUNT", "")
 AUDIT_CONTAINER = "audit-logs"
@@ -39,9 +38,16 @@ class AuditLogger:
     append-only audit blob storage simultaneously.
 
     Usage:
-        auditor = AuditLogger(run_id="...", agent_type="data-analyst", correlation_id="...")
-        event = auditor.log(action_type=ActionType.FILE_WRITE, path="/workspace/.../write/out.json",
-                            outcome=Outcome.SUCCESS)
+        auditor = AuditLogger(
+            run_id="...",
+            agent_type="data-analyst",
+            correlation_id="...",
+        )
+        event = auditor.log(
+            action_type=ActionType.FILE_WRITE,
+            path="/workspace/.../write/out.json",
+            outcome=Outcome.SUCCESS,
+        )
     """
 
     def __init__(
@@ -56,14 +62,17 @@ class AuditLogger:
         self.correlation_id = correlation_id
         self._credential = DefaultAzureCredential()
         self._blob_client: Optional[BlobClient] = None
-        self._blob_name = f"{run_id}/{datetime.now(timezone.utc).strftime('%Y%m%d')}.jsonl"
+        date_suffix = datetime.now(timezone.utc).strftime("%Y%m%d")
+        self._blob_name = f"{run_id}/{date_suffix}.jsonl"
         # Optional callback — used by the SSE endpoint to stream events to the browser
         self._on_event = on_event
 
     def _get_blob_client(self) -> BlobClient:
         if self._blob_client is None and AUDIT_STORAGE_ACCOUNT:
             account_url = f"https://{AUDIT_STORAGE_ACCOUNT}.blob.core.windows.net"
-            service = BlobServiceClient(account_url=account_url, credential=self._credential)
+            service = BlobServiceClient(
+                account_url=account_url, credential=self._credential
+            )
             container = service.get_container_client(AUDIT_CONTAINER)
             self._blob_client = container.get_blob_client(self._blob_name)
             # Ensure append blob exists (create if first write for this run)
@@ -122,7 +131,10 @@ class AuditLogger:
             return
         try:
             token = self._credential.get_token("https://monitor.azure.com/.default")
-            url = f"{DCE_ENDPOINT}/dataCollectionRules/{DCR_IMMUTABLE_ID}/streams/{LOG_ANALYTICS_STREAM}?api-version=2023-01-01"
+            url = (
+                f"{DCE_ENDPOINT}/dataCollectionRules/{DCR_IMMUTABLE_ID}/streams/"
+                f"{LOG_ANALYTICS_STREAM}?api-version=2023-01-01"
+            )
             resp = requests.post(
                 url,
                 json=[event.to_log_analytics_row()],
@@ -133,7 +145,11 @@ class AuditLogger:
                 timeout=5,
             )
             if resp.status_code not in (200, 204):
-                logger.warning("Log Analytics ingestion failed: %s %s", resp.status_code, resp.text)
+                logger.warning(
+                    "Log Analytics ingestion failed: %s %s",
+                    resp.status_code,
+                    resp.text,
+                )
         except Exception as exc:
             # Audit logging failure must never crash the agent — but must be visible
             logger.error("Failed to send audit event to Log Analytics: %s", exc)

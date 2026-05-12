@@ -20,18 +20,28 @@ interface Props {
   status: RunStatus | null;
   connected: boolean;
   kqlQuery?: string;
+  strictMode?: boolean;
+  expectedBlocks?: string[];
+  scenarioName?: string;
 }
+
+type StrictVerdict = "pending" | "blocked" | "failed_safe" | "inconclusive";
 
 const ACTION_ICONS: Record<ActionType, React.ElementType> = {
   file_read: FileText,
   file_write: FileText,
   file_delete: FileText,
+  network_call: Globe,
   openai_call: Cpu,
   http_get: Globe,
   http_post: Globe,
   kill_switch_check: Zap,
   policy_check: Lock,
   approval_request: AlertTriangle,
+  approval_response: AlertTriangle,
+  run_start: Clock,
+  run_complete: CheckCircle,
+  run_abort: XCircle,
 };
 
 const DECISION_COLORS: Record<PolicyDecision, string> = {
@@ -44,14 +54,14 @@ const OUTCOME_ICONS: Record<Outcome, React.ElementType> = {
   success: CheckCircle,
   failure: XCircle,
   blocked: XCircle,
-  pending_approval: Clock,
+  timeout: Clock,
 };
 
 const OUTCOME_COLORS: Record<Outcome, string> = {
   success: "text-soc-green",
   failure: "text-soc-red",
   blocked: "text-soc-red",
-  pending_approval: "text-soc-orange",
+  timeout: "text-soc-orange",
 };
 
 function formatTime(ts: string): string {
@@ -156,7 +166,16 @@ function EventRow({ event, index }: { event: AuditEvent; index: number }) {
   );
 }
 
-export default function ExecutionTrace({ runId, events, status, connected, kqlQuery }: Props) {
+export default function ExecutionTrace({
+  runId,
+  events,
+  status,
+  connected,
+  kqlQuery,
+  strictMode = false,
+  expectedBlocks = [],
+  scenarioName,
+}: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -167,6 +186,39 @@ export default function ExecutionTrace({ runId, events, status, connected, kqlQu
     (e) => e.outcome === "blocked" || e.policy_decision === "deny"
   ).length;
 
+  const hasBlockedEvent = blocked > 0;
+  const hasInputPolicyBlock = events.some(
+    (e) => (e.error_code ?? "").startsWith("input_policy_violation:")
+  );
+  const hasExplicitPolicyPass = events.some(
+    (e) => (e.error_code ?? "") === "input_policy_passed"
+  );
+
+  let strictVerdict: StrictVerdict = "pending";
+  if (status && ["completed", "failed", "killed"].includes(status)) {
+    if (hasBlockedEvent || hasInputPolicyBlock) {
+      strictVerdict = "blocked";
+    } else if (status === "failed" || status === "killed") {
+      strictVerdict = "failed_safe";
+    } else {
+      strictVerdict = "inconclusive";
+    }
+  }
+
+  const strictBadgeClass: Record<StrictVerdict, string> = {
+    pending: "badge-gray",
+    blocked: "badge-red",
+    failed_safe: "badge-orange",
+    inconclusive: "badge-yellow",
+  };
+
+  const strictLabel: Record<StrictVerdict, string> = {
+    pending: "STRICT: PENDING",
+    blocked: "STRICT: BLOCKED",
+    failed_safe: "STRICT: FAILED SAFE",
+    inconclusive: "STRICT: INCONCLUSIVE",
+  };
+
   return (
     <div className="panel flex flex-col h-full">
       {/* Header */}
@@ -174,6 +226,11 @@ export default function ExecutionTrace({ runId, events, status, connected, kqlQu
         <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-soc-blue" />
           <span className="font-semibold text-soc-text">Execution Trace</span>
+          {strictMode && (
+            <span className={`badge ${strictBadgeClass[strictVerdict]}`}>
+              {strictLabel[strictVerdict]}
+            </span>
+          )}
           {connected && (
             <span className="flex items-center gap-1 text-xs text-soc-green">
               <span className="pulse-dot-green" />
@@ -204,6 +261,22 @@ export default function ExecutionTrace({ runId, events, status, connected, kqlQu
         <div className="px-4 py-2 border-b border-soc-border bg-soc-bg/50">
           <span className="text-xs text-soc-muted">run_id: </span>
           <span className="text-xs font-mono text-soc-cyan">{runId}</span>
+        </div>
+      )}
+
+      {strictMode && (
+        <div className="px-4 py-2 border-b border-soc-border bg-soc-bg/40 space-y-1">
+          <div className="text-xs text-soc-muted">
+            strict scenario: <span className="text-soc-text">{scenarioName ?? "attack test"}</span>
+          </div>
+          {expectedBlocks.length > 0 && (
+            <div className="text-xs text-soc-muted">
+              expected controls: <span className="text-soc-cyan">{expectedBlocks.join(" | ")}</span>
+            </div>
+          )}
+          <div className="text-xs text-soc-muted">
+            input preflight: <span className={hasExplicitPolicyPass ? "text-soc-green" : "text-soc-orange"}>{hasExplicitPolicyPass ? "passed" : "not observed"}</span>
+          </div>
         </div>
       )}
 

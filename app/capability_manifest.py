@@ -12,12 +12,12 @@ independently (defense-in-depth: two separate enforcement points).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
 class AgentCapabilities:
     """Immutable capability set for one agent type."""
+
     allowed_tools: list[str]
     allowed_egress_fqdns: list[str]
     max_tokens_per_run: int
@@ -31,9 +31,11 @@ class AgentCapabilities:
 
 AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
     "data-analyst": AgentCapabilities(
-        description="Reads structured data files, performs analysis, writes result reports.",
+        description=(
+            "Reads structured data files, performs analysis, writes result reports."
+        ),
         allowed_tools=["file_read", "file_write", "openai_call"],
-        allowed_egress_fqdns=[],          # zero network egress needed
+        allowed_egress_fqdns=[],  # zero network egress needed
         max_tokens_per_run=50_000,
         max_run_duration_seconds=180,
         high_risk_actions=[],
@@ -52,8 +54,10 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
 def get_capabilities(agent_type: str) -> AgentCapabilities:
     caps = AGENT_CAPABILITIES.get(agent_type)
     if caps is None:
-        raise ValueError(f"Unknown agent type: {agent_type!r}. "
-                         f"Valid types: {list(AGENT_CAPABILITIES)}")
+        raise ValueError(
+            f"Unknown agent type: {agent_type!r}. "
+            f"Valid types: {list(AGENT_CAPABILITIES)}"
+        )
     return caps
 
 
@@ -68,7 +72,9 @@ def is_tool_allowed(agent_type: str, tool_name: str) -> bool:
 def is_egress_allowed(agent_type: str, fqdn: str) -> bool:
     try:
         caps = get_capabilities(agent_type)
-        return any(fqdn == allowed or fqdn.endswith("." + allowed)
-                   for allowed in caps.allowed_egress_fqdns)
+        return any(
+            fqdn == allowed or fqdn.endswith("." + allowed)
+            for allowed in caps.allowed_egress_fqdns
+        )
     except ValueError:
         return False

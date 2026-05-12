@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { Bell, RefreshCw, ExternalLink, ChevronDown } from "lucide-react";
-import { SentinelAlert, AlertSeverity } from "../types";
+import { AlertSeverity, AlertsResponse, SentinelAlert } from "../types";
 import clsx from "clsx";
 
 interface Props {
   apiBase?: string;
+  getAuthHeaders?: () => Promise<Record<string, string>>;
 }
 
 const SEVERITY_COLORS: Record<AlertSeverity, string> = {
@@ -122,7 +123,7 @@ function AlertCard({ alert, defaultOpen }: { alert: SentinelAlert; defaultOpen?:
   );
 }
 
-export default function SecurityEventFeed({ apiBase = "/api" }: Props) {
+export default function SecurityEventFeed({ apiBase = "/api", getAuthHeaders }: Props) {
   const [alerts, setAlerts] = useState<SentinelAlert[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
@@ -130,10 +131,11 @@ export default function SecurityEventFeed({ apiBase = "/api" }: Props) {
   const fetchAlerts = useCallback(async () => {
     setLoading(true);
     try {
-      const resp = await fetch(`${apiBase}/alerts`);
+      const authHeaders = getAuthHeaders ? await getAuthHeaders() : {};
+      const resp = await fetch(`${apiBase}/alerts`, { headers: authHeaders });
       if (resp.ok) {
-        const data = await resp.json();
-        setAlerts(data as SentinelAlert[]);
+        const data = (await resp.json()) as AlertsResponse;
+        setAlerts(data.alerts);
         setLastFetched(new Date());
       }
     } catch {
@@ -141,7 +143,7 @@ export default function SecurityEventFeed({ apiBase = "/api" }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [apiBase]);
+  }, [apiBase, getAuthHeaders]);
 
   // Auto-refresh every 30 seconds
   useEffect(() => {

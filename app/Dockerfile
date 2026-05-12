@@ -30,7 +30,7 @@ COPY --chown=appuser:appgroup . .
 
 # Rule 5: /tmp is a tmpfs mount — noexec enforced at container level by ACA.
 # Explicitly restrict permissions here too.
-RUN chmod 700 /app && chmod -R o-rwx /app
+RUN chown appuser:appgroup /app && chmod 700 /app && chmod -R o-rwx /app
 
 USER appuser
 

@@ -50,7 +50,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     publicNetworkAccess: 'Disabled'
     networkAcls: {
       defaultAction: 'Deny'
-      bypass: 'None'
+      bypass: 'AzureServices'    // ARM must write secrets during provisioning
     }
   }
 }
@@ -74,8 +74,33 @@ resource orchestratorKvRole 'Microsoft.Authorization/roleAssignments@2022-04-01'
   }
 }
 
-// Agent runner does NOT get Key Vault access — it reads secrets via orchestrator
-// environment injection only, never directly.
+resource agentRunnerKvRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, agentRunnerIdentity.id, kvSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
+    principalId: agentRunnerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// Agent runner has read-only KV access (Secrets User) — it reads the App Insights
+// connection string at job provisioning time via Container Apps secret reference.
+
+// ─── Placeholder Secrets ─────────────────────────────────────────────────────
+// Container Apps resolve Key Vault secret references at revision provisioning time.
+// Some secrets are written by modules that depend on compute outputs (circular dep).
+// Create placeholders here so compute can provision; downstream modules overwrite
+// with real values.
+
+resource placeholderApprovalUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'approval-logic-app-url'
+  properties: {
+    value: 'placeholder-replaced-by-approvals-module'
+    attributes: { enabled: true }
+  }
+}
 
 // ─── Private Endpoint for Key Vault ──────────────────────────────────────────
 
@@ -114,6 +139,7 @@ resource kvDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups
 
 output keyVaultName string = keyVault.name
 output keyVaultId string = keyVault.id
+output keyVaultUri string = keyVault.properties.vaultUri
 output orchestratorIdentityId string = orchestratorIdentity.id
 output orchestratorPrincipalId string = orchestratorIdentity.properties.principalId
 output orchestratorClientId string = orchestratorIdentity.properties.clientId

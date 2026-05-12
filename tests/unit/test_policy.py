@@ -9,16 +9,17 @@ Tests cover:
   - Deny cache prevents redundant OPA calls
 """
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../app"))
 
-import pytest
 from unittest.mock import MagicMock, patch
-import requests as req_lib
 
-from policy import OPAClient, PolicyDenyError, ApprovalRequiredError
+import pytest
+import requests as req_lib
 from models.audit_event import ActionType, Outcome, PolicyDecision
+from policy import ApprovalRequiredError, OPAClient, PolicyDenyError
 
 RUN_ID = "12345678-1234-1234-1234-123456789abc"
 AGENT_TYPE = "data-analyst"
@@ -34,7 +35,9 @@ class TestOPAClientAllow:
     def test_allow_passes_without_exception(self):
         client = _make_client()
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"result": {"allow": True, "requires_approval": False, "reason": ""}}
+        mock_resp.json.return_value = {
+            "result": {"allow": True, "requires_approval": False, "reason": ""}
+        }
         mock_resp.raise_for_status = MagicMock()
 
         with patch("policy.requests.post", return_value=mock_resp):
@@ -44,7 +47,9 @@ class TestOPAClientAllow:
     def test_allow_logs_policy_check(self):
         client = _make_client()
         mock_resp = MagicMock()
-        mock_resp.json.return_value = {"result": {"allow": True, "requires_approval": False}}
+        mock_resp.json.return_value = {
+            "result": {"allow": True, "requires_approval": False}
+        }
         mock_resp.raise_for_status = MagicMock()
 
         with patch("policy.requests.post", return_value=mock_resp):
@@ -61,7 +66,11 @@ class TestOPAClientDeny:
         client = _make_client()
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
-            "result": {"allow": False, "requires_approval": False, "reason": "tool_not_in_capability_manifest"}
+            "result": {
+                "allow": False,
+                "requires_approval": False,
+                "reason": "tool_not_in_capability_manifest",
+            }
         }
         mock_resp.raise_for_status = MagicMock()
 
@@ -75,7 +84,11 @@ class TestOPAClientDeny:
         client = _make_client()
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
-            "result": {"allow": False, "requires_approval": False, "reason": "path_escapes_run_sandbox"}
+            "result": {
+                "allow": False,
+                "requires_approval": False,
+                "reason": "path_escapes_run_sandbox",
+            }
         }
         mock_resp.raise_for_status = MagicMock()
 
@@ -91,7 +104,11 @@ class TestOPAClientDeny:
         client = _make_client()
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
-            "result": {"allow": False, "requires_approval": False, "reason": "test_deny"}
+            "result": {
+                "allow": False,
+                "requires_approval": False,
+                "reason": "test_deny",
+            }
         }
         mock_resp.raise_for_status = MagicMock()
 
@@ -145,7 +162,12 @@ class TestOPAClientApproval:
         client = _make_client()
         mock_resp = MagicMock()
         mock_resp.json.return_value = {
-            "result": {"allow": False, "requires_approval": True, "required_approvals": [], "reason": ""}
+            "result": {
+                "allow": False,
+                "requires_approval": True,
+                "required_approvals": [],
+                "reason": "",
+            }
         }
         mock_resp.raise_for_status = MagicMock()
 
@@ -161,9 +183,13 @@ class TestOPAClientFailClosed:
     def test_opa_connection_error_fails_closed(self):
         client = _make_client()
 
-        with patch("policy.requests.post", side_effect=req_lib.ConnectionError("OPA down")):
+        with patch(
+            "policy.requests.post", side_effect=req_lib.ConnectionError("OPA down")
+        ):
             with pytest.raises(PolicyDenyError) as exc_info:
-                client.authorize("file_write", path=f"/workspace/{RUN_ID}/write/out.txt")
+                client.authorize(
+                    "file_write", path=f"/workspace/{RUN_ID}/write/out.txt"
+                )
 
         assert "unreachable" in exc_info.value.reason.lower()
 

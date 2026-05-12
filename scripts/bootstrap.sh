@@ -8,8 +8,8 @@
 #
 # Usage:
 #   export AZURE_SUBSCRIPTION_ID="<your-sub-id>"
-#   export GITHUB_ORG="kellandamm"
-#   export GITHUB_REPO="ai_security_sandbox"
+#   export GITHUB_ORG="<your-github-org>"
+#   export GITHUB_REPO="ai-security-sandbox"
 #   export ENVIRONMENT="dev"
 #   bash scripts/bootstrap.sh
 
@@ -22,6 +22,7 @@ GITHUB_REPO="${GITHUB_REPO:?Set GITHUB_REPO}"
 ENVIRONMENT="${ENVIRONMENT:-dev}"
 LOCATION="${LOCATION:-eastus}"
 APP_NAME="ai-sandbox-deploy-${ENVIRONMENT}"
+
 
 echo "==> Bootstrapping AI Security Sandbox"
 echo "    Subscription : $SUBSCRIPTION_ID"
@@ -111,6 +112,14 @@ az role assignment create \
   --scope "/subscriptions/$SUBSCRIPTION_ID" \
   2>/dev/null || echo "    User Access Administrator role already assigned"
 
+# Storage Blob Data Contributor so deploy steps can publish the static frontend
+# using Azure AD auth (`az storage ... --auth-mode login`) without account keys.
+az role assignment create \
+  --assignee "$APP_ID" \
+  --role "Storage Blob Data Contributor" \
+  --scope "/subscriptions/$SUBSCRIPTION_ID" \
+  2>/dev/null || echo "    Storage Blob Data Contributor role already assigned"
+
 # ── Output GitHub Actions secrets to configure ────────────────────────────────
 TENANT_ID=$(az account show --query tenantId -o tsv)
 
@@ -124,6 +133,7 @@ echo "  AZURE_CLIENT_ID       = $APP_ID"
 echo "  AZURE_TENANT_ID       = $TENANT_ID"
 echo "  AZURE_SUBSCRIPTION_ID = $SUBSCRIPTION_ID"
 echo "  APPROVER_EMAIL        = <security-team-email@yourorg.com>"
+echo "  AAD_CLIENT_ID         = <client-id-of-the-app-registration-used-by-APIM-JWT-validation>"
 echo ""
 echo "================================================================"
 echo " Also configure GitHub Actions environment '${ENVIRONMENT}':"

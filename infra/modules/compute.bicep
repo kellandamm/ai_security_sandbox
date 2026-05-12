@@ -5,6 +5,7 @@ param location string
 param tags object
 
 @description('Unique resource token')
+@minLength(3)
 param resourceToken string
 
 @description('Subnet ID for Container Apps environment')
@@ -22,13 +23,33 @@ param agentRunnerIdentityId string
 @description('Key Vault name (for secret references)')
 param keyVaultName string
 
+@description('Key Vault URI (for secret references)')
+param keyVaultUri string
+
 @description('Workspace storage account name')
 param workspaceStorageAccountName string
 
 @description('Audit storage account name')
 param auditStorageAccountName string
 
+@description('Subnet ID for private endpoints')
+param privateEndpointSubnetId string
+
+@description('Private DNS zone ID for ACR (privatelink.azurecr.io)')
+param privateDnsZoneAcrId string
+
 var acrName = 'cr${resourceToken}'
+var acrLoginServer = '${acrName}.azurecr.io'
+var normalizedKeyVaultUri = endsWith(keyVaultUri, '/') ? keyVaultUri : '${keyVaultUri}/'
+// OPA image lives in ACR after the postprovision hook (scripts/import-opa-image.ps1) runs.
+// Bicep uses placeholderImage here so ARM doesn't validate an image that doesn't exist yet.
+// The hook patches the job to the real ACR image immediately after provisioning.
+var opaImageAcr = '${acrLoginServer}/opa:latest-static'
+
+// Placeholder for initial provisioning — azd deploy overwrites with the real build.
+// Container Apps with minReplicas≥1 try to pull immediately; if the image doesn't
+// exist in ACR yet (first azd up), the revision times out. MCR quickstart always works.
+var placeholderImage = 'mcr.microsoft.com/k8se/quickstart:latest'
 
 // ─── Container Registry ───────────────────────────────────────────────────────
 
@@ -39,10 +60,10 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   sku: { name: 'Premium' }
   properties: {
     adminUserEnabled: false          // Managed Identity auth only
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: 'Enabled'   // Required for ACR Tasks remote build agents (azd deploy remoteBuild:true)
     zoneRedundancy: 'Disabled'       // dev — enable for prod
     policies: {
-      quarantinePolicy: { status: 'enabled' }
+      quarantinePolicy: { status: 'disabled' }
       trustPolicy: {
         type: 'Notary'
         status: 'enabled'
@@ -77,7 +98,44 @@ resource orchestratorAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01
   }
 }
 
+// ─── ACR Private Endpoint ─────────────────────────────────────────────────────
+// Container Apps (and jobs) pull images from ACR via private endpoint for low-latency
+// in-VNet pulls. Public network access is also enabled for ACR Tasks remote builds.
+
+resource acrPe 'Microsoft.Network/privateEndpoints@2023-06-01' = {
+  name: 'pe-acr-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: { id: privateEndpointSubnetId }
+    privateLinkServiceConnections: [
+      {
+        name: 'acr-connection'
+        properties: {
+          privateLinkServiceId: acr.id
+          groupIds: ['registry']
+        }
+      }
+    ]
+  }
+}
+
+resource acrDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-06-01' = {
+  name: 'acr-dns-group'
+  parent: acrPe
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'privatelink-azurecr-io'
+        properties: { privateDnsZoneId: privateDnsZoneAcrId }
+      }
+    ]
+  }
+}
+
 // ─── Container Apps Environment ───────────────────────────────────────────────
+// Use a public environment for the long-lived control-plane apps so APIM can
+// route to stable, supported app FQDNs instead of relying on VNet-scope ingress.
 
 resource acaEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   name: 'cae-${resourceToken}'
@@ -86,7 +144,7 @@ resource acaEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
   properties: {
     vnetConfiguration: {
       infrastructureSubnetId: containerAppsSubnetId
-      internal: true               // no public IP on environment
+      internal: false              // public environment for APIM-facing app ingress
     }
     appLogsConfiguration: {
       destination: 'log-analytics'
@@ -115,7 +173,7 @@ resource acaEnv 'Microsoft.App/managedEnvironments@2023-05-01' = {
 resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
   name: 'ca-orchestrator-${resourceToken}'
   location: location
-  tags: tags
+  tags: union(tags, { 'azd-service-name': 'orchestrator' })
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -124,13 +182,13 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
   }
   properties: {
     managedEnvironmentId: acaEnv.id
-    workloadProfileName: 'Consumption'
+    workloadProfileName: 'agent-runner'
     configuration: {
       ingress: {
-        external: false            // internal only — APIM is the only entry point
+        external: true             // APIM targets the public app FQDN in the supported topology
         targetPort: 8000
         transport: 'http'
-        allowInsecure: false
+        allowInsecure: true  // APIM connects via HTTP within the VNet
       }
       registries: [
         {
@@ -141,12 +199,12 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
       secrets: [
         {
           name: 'appinsights-connection-string'
-          keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/appinsights-connection-string'
+          keyVaultUrl: '${normalizedKeyVaultUri}secrets/appinsights-connection-string'
           identity: orchestratorIdentityId
         }
         {
-          name: 'approval-webhook-secret'
-          keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/approval-webhook-secret'
+          name: 'approval-logic-app-url'
+          keyVaultUrl: '${normalizedKeyVaultUri}secrets/approval-logic-app-url'
           identity: orchestratorIdentityId
         }
       ]
@@ -155,7 +213,7 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
       containers: [
         {
           name: 'orchestrator'
-          image: '${acr.properties.loginServer}/ai-sandbox/orchestrator:latest'
+          image: placeholderImage
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -166,7 +224,9 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'KEY_VAULT_NAME', value: keyVaultName }
             { name: 'AZURE_CLIENT_ID', value: reference(orchestratorIdentityId, '2023-01-31').clientId }
             { name: 'APPINSIGHTS_CONNECTION_STRING', secretRef: 'appinsights-connection-string' }
-            { name: 'APPROVAL_WEBHOOK_SECRET', secretRef: 'approval-webhook-secret' }
+            { name: 'APPROVAL_LOGIC_APP_URL', secretRef: 'approval-logic-app-url' }
+            { name: 'APP_CONFIG_ENDPOINT', value: 'https://appcs-${resourceToken}.azconfig.io' }
+            { name: 'OPA_URL', value: 'http://localhost:8181' }
             { name: 'AGENT_JOB_NAME', value: 'caj-agent-runner-${resourceToken}' }
             { name: 'ACA_ENVIRONMENT_NAME', value: 'cae-${resourceToken}' }
             { name: 'RESOURCE_GROUP', value: resourceGroup().name }
@@ -186,6 +246,26 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
             }
           ]
         }
+        // OPA sidecar — policy decisions stay in-process, no network hop.
+        // placeholderImage used here so ARM preflight doesn't validate an ACR image
+        // that doesn't exist yet. The postprovision hook patches this to the real
+        // ACR image (custom build with policies baked in) after provisioning.
+        {
+          name: 'opa-sidecar'
+          image: placeholderImage
+          resources: {
+            cpu: json('0.25')
+            memory: '0.25Gi'
+          }
+          args: [
+            'run'
+            '--server'
+            '--v0-compatible'
+            '--addr=0.0.0.0:8181'
+            '--log-level=info'
+            '/policies/'
+          ]
+        }
       ]
       scale: {
         minReplicas: 1
@@ -199,6 +279,9 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
       }
     }
   }
+  dependsOn: [
+    acrDnsGroup
+  ]
 }
 
 // ─── Agent Runner Container App Job (ephemeral, one per run) ─────────────────
@@ -216,7 +299,7 @@ resource agentJob 'Microsoft.App/jobs@2023-05-01' = {
     }
   }
   properties: {
-    managedEnvironmentId: acaEnv.id
+    environmentId: acaEnv.id
     workloadProfileName: 'agent-runner'  // dedicated profile for isolation
     configuration: {
       triggerType: 'Manual'
@@ -235,7 +318,7 @@ resource agentJob 'Microsoft.App/jobs@2023-05-01' = {
       secrets: [
         {
           name: 'appinsights-connection-string'
-          keyVaultUrl: 'https://${keyVaultName}.vault.azure.net/secrets/appinsights-connection-string'
+          keyVaultUrl: '${normalizedKeyVaultUri}secrets/appinsights-connection-string'
           identity: agentRunnerIdentityId
         }
       ]
@@ -244,7 +327,7 @@ resource agentJob 'Microsoft.App/jobs@2023-05-01' = {
       containers: [
         {
           name: 'agent-runner'
-          image: '${acr.properties.loginServer}/ai-sandbox/agent-runner:latest'
+          image: placeholderImage
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -257,110 +340,41 @@ resource agentJob 'Microsoft.App/jobs@2023-05-01' = {
             // RUN_ID, AGENT_TYPE, TASK injected at job start time by orchestrator
           ]
         }
-        // OPA sidecar — policy decisions stay in-process, no network hop
+        // OPA sidecar — policy decisions stay in-process, no network hop.
+        // placeholderImage used here so ARM preflight doesn't validate an ACR image
+        // that doesn't exist yet. The postprovision hook patches this to the real
+        // ACR image (opaImageAcr) immediately after provisioning completes.
         {
           name: 'opa-sidecar'
-          image: 'openpolicyagent/opa:latest-static'
+          image: placeholderImage
           resources: {
             cpu: json('0.25')
-            memory: '256Mi'
+            memory: '0.25Gi'
           }
           args: [
             'run'
             '--server'
+            '--v0-compatible'
             '--addr=0.0.0.0:8181'
             '--log-level=info'
-            '--bundle=/policies'
-          ]
-        }
-      ]
-      initContainers: [
-        // Init container pulls OPA policy bundle from Blob Storage before job starts
-        {
-          name: 'policy-loader'
-          image: '${acr.properties.loginServer}/ai-sandbox/policy-loader:latest'
-          resources: {
-            cpu: json('0.1')
-            memory: '128Mi'
-          }
-          env: [
-            { name: 'WORKSPACE_STORAGE_ACCOUNT', value: workspaceStorageAccountName }
-            { name: 'AZURE_CLIENT_ID', value: reference(agentRunnerIdentityId, '2023-01-31').clientId }
+            '/policies/'
           ]
         }
       ]
     }
   }
-}
-
-// ─── Frontend Container App (SOC dashboard) ──────────────────────────────────
-// Separate app serving the React SPA. Internal ingress — fronted by APIM.
-// No secrets, no managed identity needed — just static files via nginx.
-
-resource frontendApp 'Microsoft.App/containerApps@2023-05-01' = {
-  name: 'ca-frontend-${resourceToken}'
-  location: location
-  tags: tags
-  identity: {
-    type: 'UserAssigned'
-    userAssignedIdentities: {
-      '${orchestratorIdentityId}': {}  // ACR pull only
-    }
-  }
-  properties: {
-    managedEnvironmentId: acaEnv.id
-    workloadProfileName: 'Consumption'
-    configuration: {
-      ingress: {
-        external: false         // APIM is the public entry point
-        targetPort: 80
-        transport: 'http'
-        allowInsecure: false
-      }
-      registries: [
-        {
-          server: acr.properties.loginServer
-          identity: orchestratorIdentityId
-        }
-      ]
-    }
-    template: {
-      containers: [
-        {
-          name: 'frontend'
-          image: '${acr.properties.loginServer}/ai-sandbox/frontend:latest'
-          resources: {
-            cpu: json('0.25')
-            memory: '512Mi'
-          }
-          env: [
-            // VITE_API_BASE is baked into the image at build time via ARG/ENV.
-            // The nginx proxy rewrites /api → orchestrator app on port 8000.
-            { name: 'BACKEND_URL', value: 'http://ca-orchestrator-${resourceToken}:8000' }
-          ]
-        }
-      ]
-      scale: {
-        minReplicas: 1
-        maxReplicas: 5
-        rules: [
-          {
-            name: 'http-scale'
-            http: { metadata: { concurrentRequests: '20' } }
-          }
-        ]
-      }
-    }
-  }
+  dependsOn: [
+    acrDnsGroup
+  ]
 }
 
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output acrLoginServer string = acr.properties.loginServer
+output acrName string = acr.name
+output opaImageAcr string = opaImageAcr
 output containerAppsEnvironmentName string = acaEnv.name
 output containerAppsEnvironmentId string = acaEnv.id
 output orchestratorAppName string = orchestratorApp.name
-output orchestratorAppUrl string = 'https://${orchestratorApp.properties.configuration.ingress.fqdn}'
+output orchestratorAppUrl string = 'http://${orchestratorApp.properties.configuration.ingress.fqdn}'
 output agentJobName string = agentJob.name
-output frontendAppName string = frontendApp.name
-output frontendAppUrl string = 'https://${frontendApp.properties.configuration.ingress.fqdn}'

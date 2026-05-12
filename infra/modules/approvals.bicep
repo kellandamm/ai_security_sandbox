@@ -70,14 +70,14 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           inputs: {
             host: {
               connection: {
-                name: "@parameters('$connections')['office365']['connectionId']"
+                name: '@parameters(\'$connections\')[\'office365\'][\'connectionId\']'
               }
             }
             method: 'post'
             path: '/v2/Mail/SendApproval'
             body: {
-              To: "@parameters('approverEmail')"
-              Subject: "[AI Sandbox] APPROVAL REQUIRED: @{triggerBody()?['action_type']} by @{triggerBody()?['agent_type']}"
+              To: '@parameters(\'approverEmail\')'
+              Subject: '[AI Sandbox] APPROVAL REQUIRED: @{triggerBody()?[\'action_type\']} by @{triggerBody()?[\'agent_type\']}'
               Importance: 'High'
               Options: 'Approve, Reject'
               Body: '''
@@ -99,7 +99,7 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
         // Branch on approval decision
         Approval_Decision: {
           type: 'Switch'
-          expression: "@body('Send_Approval_Email')?['SelectedOption']"
+          expression: '@body(\'Send_Approval_Email\')?[\'SelectedOption\']'
           cases: {
             Approve: {
               case: 'Approve'
@@ -108,14 +108,14 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                   type: 'Http'
                   inputs: {
                     method: 'POST'
-                    uri: "@concat(parameters('orchestratorUrl'), '/runs/', triggerBody()?['run_id'], '/approve')"
+                    uri: '@concat(parameters(\'orchestratorUrl\'), \'/runs/\', triggerBody()?[\'run_id\'], \'/approve\')'
                     headers: {
                       'Content-Type': 'application/json'
-                      'X-Callback-Token': "@triggerBody()?['callback_token']"
+                      'X-Callback-Token': '@triggerBody()?[\'callback_token\']'
                     }
                     body: {
                       approved: true
-                      approver: "@parameters('approverEmail')"
+                      approver: '@parameters(\'approverEmail\')'
                       timestamp: '@{utcNow()}'
                     }
                   }
@@ -130,15 +130,15 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
                 type: 'Http'
                 inputs: {
                   method: 'POST'
-                  uri: "@concat(parameters('orchestratorUrl'), '/runs/', triggerBody()?['run_id'], '/approve')"
+                  uri: '@concat(parameters(\'orchestratorUrl\'), \'/runs/\', triggerBody()?[\'run_id\'], \'/approve\')'
                   headers: {
                     'Content-Type': 'application/json'
-                    'X-Callback-Token': "@triggerBody()?['callback_token']"
+                    'X-Callback-Token': '@triggerBody()?[\'callback_token\']'
                   }
                   body: {
                     approved: false
                     reason: 'rejected_or_timeout'
-                    approver: "@parameters('approverEmail')"
+                    approver: '@parameters(\'approverEmail\')'
                     timestamp: '@{utcNow()}'
                   }
                 }
@@ -149,7 +149,6 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
           runAfter: {
             Send_Approval_Email: ['Succeeded', 'TimedOut']
           }
-          operationOptions: 'DisableAutomaticDecompression'
         }
         // Respond to the original HTTP trigger with acknowledgement
         Respond_To_Agent: {
@@ -159,7 +158,7 @@ resource approvalLogicApp 'Microsoft.Logic/workflows@2019-05-01' = {
             body: {
               status: 'pending'
               message: 'Approval request sent. Agent will receive callback within 24 hours.'
-              run_id: "@triggerBody()?['run_id']"
+              run_id: '@triggerBody()?[\'run_id\']'
             }
           }
           runAfter: {}
@@ -178,10 +177,16 @@ resource logicAppDiag 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview'
   properties: {
     workspaceId: logAnalyticsWorkspaceId
     logs: [
-      { category: 'WorkflowRuntime'; enabled: true }
+      {
+        category: 'WorkflowRuntime'
+        enabled: true
+      }
     ]
     metrics: [
-      { category: 'AllMetrics'; enabled: true }
+      {
+        category: 'AllMetrics'
+        enabled: true
+      }
     ]
   }
 }
@@ -193,16 +198,20 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
+resource approvalTrigger 'Microsoft.Logic/workflows/triggers@2019-05-01' existing = {
+  name: 'manual'
+  parent: approvalLogicApp
+}
+
 resource approvalUrlSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   parent: keyVault
   name: 'approval-logic-app-url'
   properties: {
-    value: listCallbackUrl(approvalLogicApp.id, '2019-05-01').value
+    value: approvalTrigger.listCallbackUrl().value
     attributes: { enabled: true }
   }
 }
 
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 
-output approvalWebhookUrl string = listCallbackUrl(approvalLogicApp.id, '2019-05-01').value
 output logicAppName string = approvalLogicApp.name

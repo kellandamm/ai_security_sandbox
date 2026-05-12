@@ -7,6 +7,9 @@ param tags object
 @description('Unique resource token')
 param resourceToken string
 
+@description('Key Vault name for storing secrets')
+param keyVaultName string
+
 // ─── Log Analytics Workspace ──────────────────────────────────────────────────
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
@@ -54,7 +57,36 @@ resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   }
 }
 
-// ─── Custom Audit Table (Data Collection Rule) ────────────────────────────────
+// ─── Custom Audit Table ───────────────────────────────────────────────────────
+// Must exist before the DCR and before Sentinel rules validate their queries.
+
+resource auditTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01' = {
+  parent: logAnalytics
+  name: 'AiAgentAudit_CL'
+  properties: {
+    schema: {
+      name: 'AiAgentAudit_CL'
+      columns: [
+        { name: 'TimeGenerated', type: 'dateTime' }
+        { name: 'run_id', type: 'string' }
+        { name: 'agent_type', type: 'string' }
+        { name: 'action_type', type: 'string' }
+        { name: 'policy_decision', type: 'string' }
+        { name: 'path', type: 'string' }
+        { name: 'destination', type: 'string' }
+        { name: 'content_hash', type: 'string' }
+        { name: 'token_count', type: 'int' }
+        { name: 'risk_score', type: 'real' }
+        { name: 'outcome', type: 'string' }
+        { name: 'error_code', type: 'string' }
+        { name: 'correlation_id', type: 'string' }
+      ]
+    }
+    retentionInDays: 90
+  }
+}
+
+// ─── Data Collection Endpoint + Rule ─────────────────────────────────────────
 // Structured AI agent audit events land in AiAgentAudit_CL table.
 
 resource auditDce 'Microsoft.Insights/dataCollectionEndpoints@2022-06-01' = {
@@ -110,9 +142,8 @@ resource auditDcr 'Microsoft.Insights/dataCollectionRules@2022-06-01' = {
       }
     ]
   }
+  dependsOn: [auditTable]
 }
-
-// ─── Microsoft Sentinel ───────────────────────────────────────────────────────
 
 resource sentinel 'Microsoft.SecurityInsights/onboardingStates@2022-12-01-preview' = {
   name: 'default'
@@ -122,49 +153,50 @@ resource sentinel 'Microsoft.SecurityInsights/onboardingStates@2022-12-01-previe
 
 // ─── Sentinel Analytics Rules ─────────────────────────────────────────────────
 
-// Rule 1: Too many OPA DENY decisions in a short window (anomaly / attack probe)
+// Rule 1: Chat/upload content blocked before or during policy evaluation
 resource ruleFrequentDeny 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
   name: guid('frequent-deny-${resourceToken}')
   scope: logAnalytics
   kind: 'Scheduled'
   properties: {
-    displayName: 'AI Agent: Frequent OPA Policy Denials'
-    description: 'More than 5 OPA deny decisions in 10 minutes — possible policy bypass probing.'
-    severity: 'Medium'
+    displayName: 'Secure Agent Chat: Prompt or Upload Blocked by Policy'
+    description: 'A chat prompt or uploaded file was blocked by deterministic input policy or OPA before unsafe agent execution.'
+    severity: 'High'
     enabled: true
     query: '''
       AiAgentAudit_CL
-      | where policy_decision == "deny"
-      | summarize DenyCount = count() by run_id, bin(TimeGenerated, 10m)
-      | where DenyCount > 5
+      | where policy_decision == "deny" or outcome == "blocked"
+      | where error_code startswith "input_policy_violation:"
+         or error_code has_any ("prompt_instruction_override", "network_exfiltration_instruction", "path_traversal_or_sensitive_path", "token_bomb_instruction")
+      | extend Violation = tostring(split(error_code, ":")[1])
+      | summarize FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated), Events=count(), Violations=make_set(Violation) by run_id, agent_type, correlation_id
     '''
-    queryFrequency: 'PT10M'
-    queryPeriod: 'PT10M'
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
     triggerOperator: 'GreaterThan'
     triggerThreshold: 0
-    suppressionDuration: 'PT1H'
+    suppressionDuration: 'PT30M'
     suppressionEnabled: false
-    tactics: ['DefenseEvasion']
+    tactics: ['DefenseEvasion', 'Exfiltration']
   }
-  dependsOn: [sentinel]
+  dependsOn: [sentinel, auditTable]
 }
 
-// Rule 2: File write outside allowed virtual path
+// Rule 2: Chat request attempted sandbox path traversal or unsafe file write
 resource rulePathEscape 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
   name: guid('path-escape-${resourceToken}')
   scope: logAnalytics
   kind: 'Scheduled'
   properties: {
-    displayName: 'AI Agent: File Write Outside Sandbox Path'
-    description: 'A file write was attempted to a path outside /workspace/{run_id}/write/ — possible sandbox escape.'
+    displayName: 'Secure Agent Chat: Sandbox Path Traversal Attempt'
+    description: 'A chat prompt or uploaded document attempted path traversal, sensitive path access, or a file write outside the allowed sandbox path.'
     severity: 'High'
     enabled: true
     query: '''
       AiAgentAudit_CL
-      | where action_type == "file_write"
-      | where path !startswith "/workspace/"
-         or not(path matches regex @"/workspace/[0-9a-f\-]{36}/write/")
-      | project TimeGenerated, run_id, agent_type, path, outcome, correlation_id
+      | where error_code has "path_traversal_or_sensitive_path"
+         or (action_type == "file_write" and (path !startswith "/workspace/" or not(path matches regex @"/workspace/[0-9a-f\-]{36}/write/")))
+      | project TimeGenerated, run_id, agent_type, action_type, path, outcome, policy_decision, error_code, correlation_id
     '''
     queryFrequency: 'PT5M'
     queryPeriod: 'PT5M'
@@ -174,26 +206,31 @@ resource rulePathEscape 'Microsoft.SecurityInsights/alertRules@2023-02-01-previe
     suppressionEnabled: false
     tactics: ['Impact', 'Persistence']
   }
-  dependsOn: [sentinel]
+  dependsOn: [sentinel, auditTable]
 }
 
-// Rule 3: Token usage spike per run
+// Rule 3: Chat request indicates token abuse or runaway summarization
 resource ruleTokenSpike 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
   name: guid('token-spike-${resourceToken}')
   scope: logAnalytics
   kind: 'Scheduled'
   properties: {
-    displayName: 'AI Agent: Token Usage Spike'
-    description: 'Agent run consumed more than 10,000 tokens in one minute — possible prompt injection or runaway loop.'
+    displayName: 'Secure Agent Chat: Token Abuse or Runaway Request'
+    description: 'A chat/upload request asked for excessive token-expensive work or the run consumed an unusual number of tokens.'
     severity: 'Medium'
     enabled: true
     query: '''
-      AiAgentAudit_CL
-      | where action_type == "openai_call"
-      | summarize TotalTokens = sum(token_count) by run_id, bin(TimeGenerated, 1m)
-      | where TotalTokens > 10000
+      let TokenBombBlocks = AiAgentAudit_CL
+        | where error_code has "token_bomb_instruction"
+        | project TimeGenerated, run_id, agent_type, TotalTokens=long(null), Reason="input-policy-token-bomb", correlation_id;
+      let RuntimeTokenSpikes = AiAgentAudit_CL
+        | where action_type == "openai_call"
+        | summarize TotalTokens = sum(token_count), TimeGenerated=max(TimeGenerated), agent_type=any(agent_type), correlation_id=any(correlation_id) by run_id, bin(TimeGenerated, 1m)
+        | where TotalTokens > 10000
+        | project TimeGenerated, run_id, agent_type, TotalTokens, Reason="runtime-token-spike", correlation_id;
+      union TokenBombBlocks, RuntimeTokenSpikes
     '''
-    queryFrequency: 'PT1M'
+    queryFrequency: 'PT5M'
     queryPeriod: 'PT5M'
     triggerOperator: 'GreaterThan'
     triggerThreshold: 0
@@ -201,17 +238,17 @@ resource ruleTokenSpike 'Microsoft.SecurityInsights/alertRules@2023-02-01-previe
     suppressionEnabled: false
     tactics: ['Impact']
   }
-  dependsOn: [sentinel]
+  dependsOn: [sentinel, auditTable]
 }
 
-// Rule 4: Kill switch triggered — high-priority ops event
+// Rule 4: Runtime kill switch blocked chat execution
 resource ruleKillSwitch 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
   name: guid('kill-switch-${resourceToken}')
   scope: logAnalytics
   kind: 'Scheduled'
   properties: {
-    displayName: 'AI Agent: Kill Switch Activated'
-    description: 'A global or agent-type kill switch was triggered — operator intervention required.'
+    displayName: 'Secure Agent Chat: Kill Switch Blocked Execution'
+    description: 'A chat request was blocked because a global, capability, or agent-type kill switch is off.'
     severity: 'High'
     enabled: true
     query: '''
@@ -220,7 +257,7 @@ resource ruleKillSwitch 'Microsoft.SecurityInsights/alertRules@2023-02-01-previe
       | where outcome == "blocked"
       | project TimeGenerated, run_id, agent_type, error_code, correlation_id
     '''
-    queryFrequency: 'PT1M'
+    queryFrequency: 'PT5M'
     queryPeriod: 'PT5M'
     triggerOperator: 'GreaterThan'
     triggerThreshold: 0
@@ -228,7 +265,51 @@ resource ruleKillSwitch 'Microsoft.SecurityInsights/alertRules@2023-02-01-previe
     suppressionEnabled: false
     tactics: ['Impact']
   }
-  dependsOn: [sentinel]
+  dependsOn: [sentinel, auditTable]
+}
+
+// Rule 5: Chat request attempted unsafe egress or data exfiltration
+resource ruleChatExfiltration 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
+  name: guid('chat-exfiltration-${resourceToken}')
+  scope: logAnalytics
+  kind: 'Scheduled'
+  properties: {
+    displayName: 'Secure Agent Chat: Unsafe Egress or Exfiltration Attempt'
+    description: 'A chat prompt or uploaded document attempted metadata-service access, localhost/sidecar probing, webhook exfiltration, or disallowed external egress.'
+    severity: 'High'
+    enabled: true
+    query: '''
+      AiAgentAudit_CL
+      | where error_code has "network_exfiltration_instruction"
+         or destination has_any ("169.254.169.254", "localhost", "127.0.0.1", "webhook.site", "example.com")
+         or (action_type in ("network_call", "http_get", "http_post") and policy_decision == "deny")
+      | project TimeGenerated, run_id, agent_type, action_type, destination, outcome, policy_decision, error_code, correlation_id
+    '''
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
+    triggerOperator: 'GreaterThan'
+    triggerThreshold: 0
+    suppressionDuration: 'PT30M'
+    suppressionEnabled: false
+    tactics: ['Exfiltration', 'Discovery']
+  }
+  dependsOn: [sentinel, auditTable]
+}
+
+// ─── Store App Insights connection string in Key Vault ───────────────────────
+// Container Apps reference this as a Key Vault secret for the APPINSIGHTS_CONNECTION_STRING env var.
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource appInsightsSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: keyVault
+  name: 'appinsights-connection-string'
+  properties: {
+    value: appInsights.properties.ConnectionString
+    attributes: { enabled: true }
+  }
 }
 
 // ─── Outputs ──────────────────────────────────────────────────────────────────

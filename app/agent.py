@@ -18,23 +18,23 @@ Per iteration:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from openai import AzureOpenAI
-from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-
 from audit import AuditLogger
-from capability_manifest import get_capabilities, is_tool_allowed, is_egress_allowed
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from capability_manifest import get_capabilities, is_egress_allowed, is_tool_allowed
 from kill_switch import KillSwitchClient, KillSwitchError
 from models.audit_event import ActionType, Outcome, PolicyDecision
 from models.requests import AgentRunRequest
-from policy import OPAClient, PolicyDenyError, ApprovalRequiredError
+from openai import AzureOpenAI
+from policy import ApprovalRequiredError, OPAClient, PolicyDenyError
 from rate_limiter import TokenBudget
 from sandbox import EphemeralWorkspace
 
@@ -44,22 +44,44 @@ AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 APPROVAL_LOGIC_APP_URL = os.environ.get("APPROVAL_LOGIC_APP_URL", "")
 
-# Approval callback: run_id → asyncio.Future[bool]
-_pending_approvals: dict[str, asyncio.Future] = {}
+# Approval callback: run_id -> pending approval state.
+_pending_approvals: dict[str, dict[str, Any]] = {}
 
 
-def register_approval_future(run_id: str) -> asyncio.Future:
+def register_approval_future(run_id: str, callback_token: str) -> asyncio.Future:
     loop = asyncio.get_event_loop()
     fut: asyncio.Future = loop.create_future()
-    _pending_approvals[run_id] = fut
+    _pending_approvals[run_id] = {
+        "future": fut,
+        "callback_token": callback_token,
+    }
     return fut
 
 
-def resolve_approval(run_id: str, approved: bool) -> None:
+def build_callback_token(run_id: str) -> str:
+    return hmac.new(
+        key=run_id.encode("utf-8"),
+        msg=os.urandom(32),
+        digestmod="sha256",
+    ).hexdigest()
+
+
+def resolve_approval(run_id: str, approved: bool, callback_token: str) -> bool:
     """Called by the Logic App callback endpoint."""
-    fut = _pending_approvals.pop(run_id, None)
+    pending = _pending_approvals.get(run_id)
+    if not pending:
+        return False
+
+    expected_token = pending["callback_token"]
+    if not hmac.compare_digest(expected_token, callback_token):
+        return False
+
+    fut = pending["future"]
+    _pending_approvals.pop(run_id, None)
     if fut and not fut.done():
         fut.set_result(approved)
+        return True
+    return False
 
 
 async def _request_human_approval(
@@ -77,7 +99,9 @@ async def _request_human_approval(
     Returns True if approved, False if rejected or timed out (24h).
     """
     if not APPROVAL_LOGIC_APP_URL:
-        logger.warning("No APPROVAL_LOGIC_APP_URL configured — auto-denying approval request")
+        logger.warning(
+            "No APPROVAL_LOGIC_APP_URL configured; auto-denying approval request"
+        )
         return False
 
     auditor.log(
@@ -104,12 +128,14 @@ async def _request_human_approval(
         logger.error("Failed to post approval request to Logic App: %s", exc)
         return False
 
-    fut = register_approval_future(run_id)
+    fut = register_approval_future(run_id, callback_token)
     try:
         approved = await asyncio.wait_for(fut, timeout=86400)  # 24 hour timeout
     except asyncio.TimeoutError:
         logger.warning("Approval timed out for run %s — auto-denying", run_id)
         approved = False
+    finally:
+        _pending_approvals.pop(run_id, None)
 
     auditor.log(
         ActionType.APPROVAL_RESPONSE,
@@ -119,7 +145,10 @@ async def _request_human_approval(
     return approved
 
 
-async def run_agent(request: AgentRunRequest, workspace: EphemeralWorkspace) -> dict[str, Any]:
+async def run_agent(
+    request: AgentRunRequest,
+    workspace: EphemeralWorkspace,
+) -> dict[str, Any]:
     """
     Main agent loop. Returns result dict on completion.
     Raises on unrecoverable error.
@@ -146,12 +175,16 @@ async def run_agent(request: AgentRunRequest, workspace: EphemeralWorkspace) -> 
     )
 
     messages = [
-        {"role": "system", "content": (
-            f"You are a {agent_type} agent operating inside a secure sandbox. "
-            f"You have access to these tools only: {caps.allowed_tools}. "
-            f"Remaining token budget: {token_budget.remaining}. "
-            "Do not attempt to access paths, URLs, or capabilities not explicitly listed."
-        )},
+        {
+            "role": "system",
+            "content": (
+                f"You are a {agent_type} agent operating inside a secure sandbox. "
+                f"You have access to these tools only: {caps.allowed_tools}. "
+                f"Remaining token budget: {token_budget.remaining}. "
+                "Do not attempt to access paths, URLs, or capabilities not explicitly "
+                "listed."
+            ),
+        },
         {"role": "user", "content": request.task},
     ]
 
@@ -177,15 +210,25 @@ async def run_agent(request: AgentRunRequest, workspace: EphemeralWorkspace) -> 
             raise RuntimeError(f"OpenAI call denied by policy: {exc.reason}")
 
         try:
-            response = openai_client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages,
-                tools=_build_tool_definitions(caps.allowed_tools),
-                tool_choice="auto",
-                max_tokens=min(4096, token_budget.remaining),
-            )
+            completion_limit = min(4096, token_budget.remaining)
+            completion_kwargs = {
+                "model": OPENAI_MODEL,
+                "messages": messages,
+                "tools": _build_tool_definitions(caps.allowed_tools),
+                "tool_choice": "auto",
+            }
+            if OPENAI_MODEL.startswith("gpt-5"):
+                completion_kwargs["max_completion_tokens"] = completion_limit
+            else:
+                completion_kwargs["max_tokens"] = completion_limit
+
+            response = openai_client.chat.completions.create(**completion_kwargs)
         except Exception as exc:
-            auditor.log(ActionType.OPENAI_CALL, outcome=Outcome.FAILURE, error_code=str(exc))
+            auditor.log(
+                ActionType.OPENAI_CALL,
+                outcome=Outcome.FAILURE,
+                error_code=str(exc),
+            )
             raise
 
         usage = response.usage
@@ -202,10 +245,19 @@ async def run_agent(request: AgentRunRequest, workspace: EphemeralWorkspace) -> 
 
         # No tool calls → agent is done
         if not choice.message.tool_calls:
-            result = {"output": choice.message.content, "tokens_used": caps.max_tokens_per_run - token_budget.remaining}
+            result = {
+                "output": choice.message.content,
+                "tokens_used": (caps.max_tokens_per_run - token_budget.remaining),
+            }
             break
 
-        messages.append({"role": "assistant", "content": choice.message.content, "tool_calls": choice.message.tool_calls})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": choice.message.content,
+                "tool_calls": choice.message.tool_calls,
+            }
+        )
 
         # Step 4-5: process each tool call
         for tool_call in choice.message.tool_calls:
@@ -225,11 +277,13 @@ async def run_agent(request: AgentRunRequest, workspace: EphemeralWorkspace) -> 
                 correlation_id=request.correlation_id,
             )
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call.id,
-                "content": json.dumps(tool_result),
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": json.dumps(tool_result),
+                }
+            )
 
     return result
 
@@ -256,13 +310,19 @@ async def _execute_tool(
             outcome=Outcome.BLOCKED,
             error_code=f"tool_not_in_manifest:{tool_name}",
         )
-        return {"error": f"Tool '{tool_name}' not allowed for agent type '{agent_type}'"}
+        return {
+            "error": (f"Tool '{tool_name}' not allowed for agent type '{agent_type}'")
+        }
 
     # Kill switch check for this action type
     try:
         kill_switch.check(agent_type=agent_type, action_type=tool_name)
     except KillSwitchError as exc:
-        auditor.log(ActionType.KILL_SWITCH_CHECK, outcome=Outcome.BLOCKED, error_code=exc.flag_name)
+        auditor.log(
+            ActionType.KILL_SWITCH_CHECK,
+            outcome=Outcome.BLOCKED,
+            error_code=exc.flag_name,
+        )
         return {"error": f"Action blocked by kill switch: {exc.flag_name}"}
 
     # OPA authorization
@@ -276,9 +336,8 @@ async def _execute_tool(
         opa.authorize(tool_name, path=path, destination=destination)
     except PolicyDenyError as exc:
         return {"error": f"Policy denied: {exc.reason}"}
-    except ApprovalRequiredError as exc:
-        import secrets as _secrets
-        callback_token = _secrets.token_urlsafe(32)
+    except ApprovalRequiredError:
+        callback_token = build_callback_token(run_id)
         approved = await _request_human_approval(
             run_id=run_id,
             agent_type=agent_type,
@@ -297,8 +356,7 @@ async def _execute_tool(
         if tool_name == "file_write":
             content = tool_args.get("content", "").encode()
             vpath = workspace.write_file(
-                tool_args["path"], content,
-                tool_args.get("content_type", "text/plain")
+                tool_args["path"], content, tool_args.get("content_type", "text/plain")
             )
             return {"written_to": vpath}
 
@@ -344,9 +402,25 @@ def _build_tool_definitions(allowed_tools: list[str]) -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Virtual path like /workspace/{run_id}/write/output.txt"},
-                        "content": {"type": "string", "description": "File content to write"},
-                        "content_type": {"type": "string", "enum": ["text/plain", "application/json", "text/csv", "text/markdown"]},
+                        "path": {
+                            "type": "string",
+                            "description": (
+                                "Virtual path like /workspace/{run_id}/write/output.txt"
+                            ),
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "File content to write",
+                        },
+                        "content_type": {
+                            "type": "string",
+                            "enum": [
+                                "text/plain",
+                                "application/json",
+                                "text/csv",
+                                "text/markdown",
+                            ],
+                        },
                     },
                     "required": ["path", "content"],
                 },
@@ -356,11 +430,16 @@ def _build_tool_definitions(allowed_tools: list[str]) -> list[dict]:
             "type": "function",
             "function": {
                 "name": "file_read",
-                "description": "Read a previously written file from the sandbox workspace",
+                "description": (
+                    "Read a previously written file from the sandbox workspace"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "path": {"type": "string", "description": "Virtual path to read"},
+                        "path": {
+                            "type": "string",
+                            "description": "Virtual path to read",
+                        },
                     },
                     "required": ["path"],
                 },

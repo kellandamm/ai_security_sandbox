@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import uuid
 from enum import Enum
 from typing import Any, Optional
+
 from pydantic import BaseModel, Field
-import uuid
 
 
 class AgentType(str, Enum):

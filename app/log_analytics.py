@@ -42,6 +42,7 @@ class LogAnalyticsClient:
 
         # Sanitise run_id — must be a UUID
         import re
+
         if not re.match(r"^[0-9a-f\-]{36}$", run_id):
             raise ValueError(f"Invalid run_id: {run_id!r}")
 
@@ -131,13 +132,17 @@ def _mock_sentinel_alerts() -> list[dict[str, Any]]:
     These match the analytics rules defined in monitoring.bicep.
     """
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc).isoformat()
     return [
         {
             "id": "alert-001",
             "name": "AI Agent: Frequent OPA Policy Denials",
             "severity": "Medium",
-            "description": "More than 5 OPA deny decisions detected in 10 minutes — possible policy bypass probing.",
+            "description": (
+                "More than 5 OPA deny decisions detected in 10 minutes — "
+                "possible policy bypass probing."
+            ),
             "timestamp": now,
             "status": "New",
             "tactics": "DefenseEvasion",
@@ -147,7 +152,10 @@ def _mock_sentinel_alerts() -> list[dict[str, Any]]:
             "id": "alert-002",
             "name": "AI Agent: File Write Outside Sandbox Path",
             "severity": "High",
-            "description": "A file write was attempted to a path outside /workspace/{run_id}/write/ — possible sandbox escape.",
+            "description": (
+                "A file write was attempted to a path outside "
+                "/workspace/{run_id}/write/ — possible sandbox escape."
+            ),
             "timestamp": now,
             "status": "New",
             "tactics": "Impact,Persistence",
