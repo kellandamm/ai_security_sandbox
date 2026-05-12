@@ -97,6 +97,10 @@ pwsh ./scripts/smoke-test.ps1 `
 
 The smoke test validates unauthenticated denial, authenticated kill-switch access, run creation, SSE events, run completion, and timeline retrieval.
 
+For the deployed architecture to match the security design, the frontend image must be built with `VITE_API_BASE=https://<your-apim-gateway>/sandbox`, `VITE_AAD_CLIENT_ID`, and `VITE_AAD_TENANT_ID`. The deployment hooks and GitHub Actions workflow pass those build arguments automatically. The production frontend container now fails its Docker build when those values are missing, and its Nginx config rejects same-origin `/api/*` or `/sandbox/*` calls so browser traffic cannot fall back to a direct orchestrator proxy.
+
+Normal orchestrator API routes also require the `X-Orchestrator-Gateway-Secret` header injected by APIM. A direct call to the orchestrator Web App should return `403` for routes such as `/runs`, while `GET /health` remains available for platform health probes.
+
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |

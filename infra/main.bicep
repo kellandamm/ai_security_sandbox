@@ -23,6 +23,10 @@ param aadTenantId string = tenant().tenantId
 @description('Principal ID of the user or service principal running azd up (used to grant Storage Blob Data Contributor on the frontend storage account)')
 param deployerPrincipalId string = ''
 
+@secure()
+@description('Shared secret APIM injects before forwarding requests to the orchestrator')
+param orchestratorGatewaySecret string = newGuid()
+
 var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName, project: 'ai-security-sandbox' }
@@ -135,6 +139,7 @@ module orchestratorWebApp 'modules/orchestrator_webapp.bicep' = {
     auditStorageAccountName: storage.outputs.auditStorageAccountName
     agentJobName: compute.outputs.agentJobName
     appConfigEndpoint: killSwitch.outputs.appConfigEndpoint
+    orchestratorGatewaySecret: orchestratorGatewaySecret
   }
 }
 
@@ -151,6 +156,7 @@ module apim 'modules/apim.bicep' = {
     backendAppUrl: orchestratorWebApp.outputs.orchestratorUrl
     aadTenantId: aadTenantId
     aadClientId: aadClientId
+    orchestratorGatewaySecret: orchestratorGatewaySecret
     publisherEmail: approverEmail
   }
 }

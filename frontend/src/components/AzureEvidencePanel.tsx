@@ -19,7 +19,7 @@ function getPortalLinks(runId: string) {
       "https://portal.azure.com/#blade/AppInsightsExtension/UsageAnalysisBlade",
     apim:
       "https://portal.azure.com/#view/Microsoft_Azure_ApiManagement/ApiManagementMenuBlade/~/overview",
-    searchHint: `run_id == \"${encoded}\"`,
+    searchHint: `run_id == "${encoded}"`,
   };
 }
 
@@ -105,7 +105,7 @@ export default function AzureEvidencePanel({ runId, status, events }: Props) {
           </div>
           {runId && (
             <button
-              onClick={() => copyText(`run_id == \"${runId}\"`)}
+              onClick={() => copyText(`run_id == "${runId}"`)}
               className="btn btn-primary text-xs"
               title="Copy KQL filter"
             >

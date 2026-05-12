@@ -34,6 +34,10 @@ param agentJobName string
 @description('App Configuration endpoint')
 param appConfigEndpoint string
 
+@description('Shared secret that allows APIM-originated requests to reach the orchestrator')
+@secure()
+param orchestratorGatewaySecret string
+
 var normalizedKeyVaultUri = endsWith(keyVaultUri, '/') ? keyVaultUri : '${keyVaultUri}/'
 
 resource orchestratorPlan 'Microsoft.Web/serverfarms@2022-09-01' = {
@@ -128,6 +132,10 @@ resource orchestratorWebApp 'Microsoft.Web/sites@2022-09-01' = {
         {
           name: 'RESOURCE_GROUP'
           value: resourceGroup().name
+        }
+        {
+          name: 'ORCHESTRATOR_GATEWAY_SECRET'
+          value: orchestratorGatewaySecret
         }
       ]
     }

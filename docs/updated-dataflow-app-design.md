@@ -30,8 +30,8 @@ flowchart LR
     Operator[Operator / analyst browser] -->|MSAL sign-in| Entra[Microsoft Entra ID]
     Operator -->|HTTPS| Frontend[Frontend Web App\nReact + Nginx]
 
-    Frontend -->|POST /api/runs\nGET /api/stream/runs/{id}| ApiGateway[API route\nPreferred: APIM /sandbox\nFallback: same-origin proxy]
-    ApiGateway -->|JWT, rate limit, quota, correlation| Orchestrator[FastAPI Orchestrator\nWeb App]
+    Frontend -->|POST /sandbox/runs\nGET /sandbox/stream/runs/{id}| ApiGateway[APIM /sandbox\nJWT, rate limit, quota\ncorrelation ID]
+    ApiGateway -->|inject gateway header| Orchestrator[FastAPI Orchestrator\nWeb App]
 
     Orchestrator -->|check flags| AppConfig[Azure App Configuration\nkill switches]
     Orchestrator -->|create run task| Runner[Ephemeral Agent Runner\nContainer Apps Job]
@@ -55,7 +55,9 @@ flowchart LR
 
 The operator opens the frontend Web App. When authentication is enabled, the React shell uses MSAL to acquire a Microsoft Entra token before exposing the workspace. The frontend sends authenticated API requests using `useAuthHeaders`.
 
-The target production path should keep API traffic behind APIM so JWT validation, quota, rate limiting, and correlation headers are consistently applied. The current Nginx config also supports a same-origin proxy path for app compatibility and demo operation.
+The deployed production path keeps browser API traffic behind APIM so JWT validation, quota, rate limiting, and correlation headers are consistently applied. The frontend image is built with `VITE_API_BASE=https://<apim-gateway>/sandbox`; same-origin `/api` and `/sandbox` paths on the frontend host intentionally return an error instead of proxying to the orchestrator.
+
+APIM injects `X-Orchestrator-Gateway-Secret` before forwarding to the orchestrator. In deployed environments the orchestrator requires that header for normal API routes, so direct public calls to the orchestrator Web App fail before reaching run intake. `/health` remains available for platform probes, and approval callbacks continue to use their callback token.
 
 ### 2. Run Intake
 
@@ -64,6 +66,7 @@ A run starts through `POST /runs` with JSON or multipart form data. The orchestr
 Key controls at intake:
 
 - APIM validates JWTs and applies request limits.
+- APIM injects the orchestrator gateway header required by backend middleware.
 - Orchestrator middleware propagates `X-Correlation-ID`.
 - Orchestrator kill switch middleware blocks execution when global execution is disabled.
 - In-process rate limiting backs up APIM.
@@ -273,8 +276,7 @@ Recommended card fields:
 ### Phase 3: SOC and Gateway Polish
 
 - Add Alerts view backed by `/alerts`.
-- Standardize the production API path so the frontend reaches the orchestrator through APIM.
-- Replace hard-coded Nginx upstreams with environment-driven configuration at build or container startup.
+- Keep the production API path pinned to APIM and fail builds that omit the APIM endpoint or Entra settings.
 - Add Azure/Security portal deep links where tenant/subscription/workspace IDs are available.
 
 ## Design Decisions and Guardrails
@@ -288,11 +290,10 @@ Recommended card fields:
 
 ## Open Design Decisions
 
-1. API path: the production target should be APIM for public traffic, while same-origin direct proxy can remain a demo fallback.
-2. Runtime target: the repo currently contains both Container Apps and Web App orchestrator resources. Pick one public orchestrator target as the long-term source of truth, or document why both remain.
-3. Approval UI: the current approval callback is designed for Logic App, but the console could show read-only pending approval state from audit events.
-4. Evidence export: decide whether exports are local JSON downloads only, or also written to a governed storage location.
-5. Alert correlation: Sentinel alert payloads may need normalized custom details so `/alerts` can reliably map alert cards back to run IDs.
+1. Runtime target: the repo currently contains both Container Apps and Web App orchestrator resources. Pick one public orchestrator target as the long-term source of truth, or document why both remain.
+2. Approval UI: the current approval callback is designed for Logic App, but the console could show read-only pending approval state from audit events.
+3. Evidence export: decide whether exports are local JSON downloads only, or also written to a governed storage location.
+4. Alert correlation: Sentinel alert payloads may need normalized custom details so `/alerts` can reliably map alert cards back to run IDs.
 
 ## App Design Acceptance Criteria
 

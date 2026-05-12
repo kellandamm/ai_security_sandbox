@@ -7,6 +7,7 @@ Middleware stack (outer → inner):
   3. AuditMiddleware         — log every request/response
   4. KillSwitchMiddleware    — global kill switch on every request
   5. RateLimitMiddleware     — token-bucket backstop behind APIM
+    6. GatewayHeaderMiddleware — require APIM shared header in production
 
 Routes:
   POST   /runs                     — start a sandboxed agent run (JSON or multipart)
@@ -48,6 +49,7 @@ from fastapi import (
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from gateway import GatewayHeaderMiddleware
 from kill_switch import KillSwitchClient, KillSwitchError
 from log_analytics import LogAnalyticsClient
 from models.audit_event import ActionType, Outcome, PolicyDecision
@@ -291,6 +293,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(KillSwitchMiddleware)
 app.add_middleware(AuditMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(GatewayHeaderMiddleware)
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────

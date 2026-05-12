@@ -20,8 +20,8 @@ Internet
     │
     ▼
 ┌──────────────────────────────┐     ┌──────────────────────────────────────┐
-│  Static Website (Azure Blob) │     │ Azure API Management                │
-│  React SPA / SOC Console     │────▶│ rate limiting, JWT validation, CORS │
+│ Frontend Web App             │     │ Azure API Management                │
+│ React SPA / SOC Console      │────▶│ rate limiting, JWT validation, CORS │
 └──────────────────────────────┘     └──────────────────┬───────────────────┘
                                                         │ HTTPS
                                                         ▼
@@ -110,7 +110,7 @@ All rules from the article are implemented in `app/sandbox.py`:
 - **Azure API Management**: `rate-limit-by-key` (100 req/60s per agent-id) + `quota-by-key` (10k/day)
 - In-process token bucket (`rate_limiter.py`) as backstop — same 100/60s limit
 - Per-run **token budget** enforced by `TokenBudget` class — caps OpenAI spend per agent run
-- APIM is the intended public entry point for the backend APIs; the SPA is published separately as a static website
+- APIM is the public entry point for user-facing backend APIs. It validates the user token, injects a shared gateway header, and forwards to the orchestrator. The deployed SPA is published separately as a frontend Web App and is built with the APIM `/sandbox` URL.
 
 ### 7. Capability Isolation
 - `capability_manifest.py` defines per-agent-type tool allowlists, egress FQDNs, token budgets, time limits

@@ -22,6 +22,10 @@ param aadTenantId string
 @description('Azure AD app client ID (used as the token audience: api://<clientId>)')
 param aadClientId string
 
+@description('Shared secret APIM adds before forwarding requests to the orchestrator')
+@secure()
+param orchestratorGatewaySecret string
+
 @description('Publisher email for APIM portal notifications')
 param publisherEmail string
 
@@ -110,6 +114,16 @@ resource namedValueBackendHost 'Microsoft.ApiManagement/service/namedValues@2023
   }
 }
 
+resource namedValueGatewaySecret 'Microsoft.ApiManagement/service/namedValues@2023-05-01-preview' = {
+  name: 'orchestratorGatewaySecret'
+  parent: apim
+  properties: {
+    displayName: 'orchestratorGatewaySecret'
+    value: orchestratorGatewaySecret
+    secret: true
+  }
+}
+
 // ─── Backend — orchestrator ───────────────────────────────────────────────────
 
 resource backend 'Microsoft.ApiManagement/service/backends@2023-05-01-preview' = {
@@ -167,7 +181,7 @@ resource catchAllOperations 'Microsoft.ApiManagement/service/apis/operations@202
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-preview' = {
   name: 'policy'
   parent: api
-  dependsOn: [namedValueTenantId, namedValueClientId, namedValueBackendHost]   // named values must exist before policy is applied
+  dependsOn: [namedValueTenantId, namedValueClientId, namedValueBackendHost, namedValueGatewaySecret]   // named values must exist before policy is applied
   properties: {
     format: 'xml'
     value: '''
@@ -179,6 +193,9 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
     <set-variable name="correlationId" value="@(context.Request.Headers.GetValueOrDefault(&quot;X-Correlation-ID&quot;, Guid.NewGuid().ToString()))" />
     <set-header name="X-Correlation-ID" exists-action="override">
       <value>@((string)context.Variables["correlationId"])</value>
+    </set-header>
+    <set-header name="X-Orchestrator-Gateway-Secret" exists-action="override">
+      <value>{{orchestratorGatewaySecret}}</value>
     </set-header>
 
     <!-- CORS for the static frontend and local Vite dev server -->
