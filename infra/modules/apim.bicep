@@ -26,6 +26,10 @@ param aadClientId string
 @secure()
 param orchestratorGatewaySecret string
 
+@description('Shared secret used to sign forwarded identity headers from APIM to backend')
+@secure()
+param apimIdentitySigningSecret string
+
 @description('Publisher email for APIM portal notifications')
 param publisherEmail string
 
@@ -124,6 +128,16 @@ resource namedValueGatewaySecret 'Microsoft.ApiManagement/service/namedValues@20
   }
 }
 
+resource namedValueIdentitySigningSecret 'Microsoft.ApiManagement/service/namedValues@2023-05-01-preview' = {
+  name: 'apimIdentitySigningSecret'
+  parent: apim
+  properties: {
+    displayName: 'apimIdentitySigningSecret'
+    value: apimIdentitySigningSecret
+    secret: true
+  }
+}
+
 // ─── Backend — orchestrator ───────────────────────────────────────────────────
 
 resource backend 'Microsoft.ApiManagement/service/backends@2023-05-01-preview' = {
@@ -181,7 +195,7 @@ resource catchAllOperations 'Microsoft.ApiManagement/service/apis/operations@202
 resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-preview' = {
   name: 'policy'
   parent: api
-  dependsOn: [namedValueTenantId, namedValueClientId, namedValueBackendHost, namedValueGatewaySecret]   // named values must exist before policy is applied
+  dependsOn: [namedValueTenantId, namedValueClientId, namedValueBackendHost, namedValueGatewaySecret, namedValueIdentitySigningSecret]   // named values must exist before policy is applied
   properties: {
     format: 'xml'
     value: '''
@@ -196,6 +210,24 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
     </set-header>
     <set-header name="X-Orchestrator-Gateway-Secret" exists-action="override">
       <value>{{orchestratorGatewaySecret}}</value>
+    </set-header>
+    <set-header name="X-Auth-Subject" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Auth-Tenant-Id" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Auth-Roles" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Auth-Scopes" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Auth-Timestamp" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Auth-Signature" exists-action="override">
+      <value></value>
     </set-header>
 
     <!-- CORS for the static frontend and local Vite dev server -->
@@ -223,7 +255,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
     <!-- JWT validation: require valid Azure AD bearer token (skipped when AAD not configured) -->
     <choose>
       <when condition="@(&quot;{{aadClientId}}&quot; != &quot;NOT_CONFIGURED&quot; &amp;&amp; !context.Request.Url.Path.EndsWith(&quot;/health&quot;))">
-        <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized: valid Azure AD token required">
+        <validate-jwt header-name="Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized: valid Azure AD token required" output-token-variable-name="validatedJwt">
           <openid-config url="https://login.microsoftonline.com/{{aadTenantId}}/v2.0/.well-known/openid-configuration" />
           <required-claims>
             <claim name="aud" match="any">
@@ -232,6 +264,30 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
             </claim>
           </required-claims>
         </validate-jwt>
+        <set-variable name="authSubject" value="@(context.Variables.GetValueOrDefault&lt;Jwt&gt;(&quot;validatedJwt&quot;)?.Subject ?? &quot;&quot;)" />
+        <set-variable name="authTenantId" value="{{aadTenantId}}" />
+        <set-variable name="authRoles" value="" />
+        <set-variable name="authScopes" value="" />
+        <set-variable name="authTimestamp" value="@(DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())" />
+        <set-variable name="authSignature" value="@(BitConverter.ToString((new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(&quot;{{apimIdentitySigningSecret}}&quot;))).ComputeHash(System.Text.Encoding.UTF8.GetBytes(string.Join(&quot;|&quot;, new[] { (string)context.Variables[&quot;authSubject&quot;], (string)context.Variables[&quot;authTenantId&quot;], (string)context.Variables[&quot;authRoles&quot;], (string)context.Variables[&quot;authScopes&quot;], (string)context.Variables[&quot;authTimestamp&quot;] })))).Replace(&quot;-&quot;, &quot;&quot;).ToLowerInvariant())" />
+        <set-header name="X-Auth-Subject" exists-action="override">
+          <value>@((string)context.Variables[&quot;authSubject&quot;])</value>
+        </set-header>
+        <set-header name="X-Auth-Tenant-Id" exists-action="override">
+          <value>@((string)context.Variables[&quot;authTenantId&quot;])</value>
+        </set-header>
+        <set-header name="X-Auth-Roles" exists-action="override">
+          <value>@((string)context.Variables[&quot;authRoles&quot;])</value>
+        </set-header>
+        <set-header name="X-Auth-Scopes" exists-action="override">
+          <value>@((string)context.Variables[&quot;authScopes&quot;])</value>
+        </set-header>
+        <set-header name="X-Auth-Timestamp" exists-action="override">
+          <value>@((string)context.Variables[&quot;authTimestamp&quot;])</value>
+        </set-header>
+        <set-header name="X-Auth-Signature" exists-action="override">
+          <value>@((string)context.Variables[&quot;authSignature&quot;])</value>
+        </set-header>
       </when>
     </choose>
 

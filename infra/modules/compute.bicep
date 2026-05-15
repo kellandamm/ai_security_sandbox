@@ -38,6 +38,10 @@ param privateEndpointSubnetId string
 @description('Private DNS zone ID for ACR (privatelink.azurecr.io)')
 param privateDnsZoneAcrId string
 
+@description('Shared secret APIM uses to sign forwarded identity headers')
+@secure()
+param apimIdentitySigningSecret string
+
 var acrName = 'cr${resourceToken}'
 var acrLoginServer = '${acrName}.azurecr.io'
 var normalizedKeyVaultUri = endsWith(keyVaultUri, '/') ? keyVaultUri : '${keyVaultUri}/'
@@ -230,6 +234,7 @@ resource orchestratorApp 'Microsoft.App/containerApps@2023-05-01' = {
             { name: 'AGENT_JOB_NAME', value: 'caj-agent-runner-${resourceToken}' }
             { name: 'ACA_ENVIRONMENT_NAME', value: 'cae-${resourceToken}' }
             { name: 'RESOURCE_GROUP', value: resourceGroup().name }
+            { name: 'APIM_IDENTITY_SIGNING_SECRET', value: apimIdentitySigningSecret }
           ]
           probes: [
             {

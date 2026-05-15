@@ -38,6 +38,10 @@ param appConfigEndpoint string
 @secure()
 param orchestratorGatewaySecret string
 
+@description('Shared secret APIM uses to sign forwarded identity headers')
+@secure()
+param apimIdentitySigningSecret string
+
 var normalizedKeyVaultUri = endsWith(keyVaultUri, '/') ? keyVaultUri : '${keyVaultUri}/'
 
 resource orchestratorPlan 'Microsoft.Web/serverfarms@2022-09-01' = {
@@ -136,6 +140,10 @@ resource orchestratorWebApp 'Microsoft.Web/sites@2022-09-01' = {
         {
           name: 'ORCHESTRATOR_GATEWAY_SECRET'
           value: orchestratorGatewaySecret
+        }
+        {
+          name: 'APIM_IDENTITY_SIGNING_SECRET'
+          value: apimIdentitySigningSecret
         }
       ]
     }

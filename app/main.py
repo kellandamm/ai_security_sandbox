@@ -25,6 +25,8 @@ Routes:
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -69,7 +71,37 @@ from starlette.middleware.base import BaseHTTPMiddleware
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name, "1" if default else "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "*")
+ENABLE_DEMO_FEATURES = _env_flag("ENABLE_DEMO_FEATURES", default=False)
+ENABLE_APP_AUTHZ = _env_flag("ENABLE_APP_AUTHZ", default=True)
+REQUIRE_IDENTITY_SIGNATURE = _env_flag("REQUIRE_IDENTITY_SIGNATURE", default=True)
+APIM_IDENTITY_SIGNING_SECRET = os.environ.get("APIM_IDENTITY_SIGNING_SECRET", "")
+IDENTITY_SIGNATURE_MAX_AGE_SECONDS = int(
+    os.environ.get("IDENTITY_SIGNATURE_MAX_AGE_SECONDS", "300")
+)
+_ADMIN_ROLE_VALUES = {
+    value.strip()
+    for value in os.environ.get("ADMIN_ROLE_VALUES", "Sandbox.Admin").split(",")
+    if value.strip()
+}
+_ADMIN_SCOPE_VALUES = {
+    value.strip()
+    for value in os.environ.get("ADMIN_SCOPE_VALUES", "sandbox.admin").split(",")
+    if value.strip()
+}
+
+_HDR_AUTH_SUBJECT = "X-Auth-Subject"
+_HDR_AUTH_TENANT_ID = "X-Auth-Tenant-Id"
+_HDR_AUTH_ROLES = "X-Auth-Roles"
+_HDR_AUTH_SCOPES = "X-Auth-Scopes"
+_HDR_AUTH_TIMESTAMP = "X-Auth-Timestamp"
+_HDR_AUTH_SIGNATURE = "X-Auth-Signature"
 
 # ── Shared state ──────────────────────────────────────────────────────────────
 _runs: dict[str, dict[str, Any]] = {}
@@ -153,6 +185,26 @@ _INPUT_POLICY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ),
 ]
 
+_DLP_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("ssn", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("credit_card", re.compile(r"\b(?:\d[ -]*?){13,19}\b")),
+    ("email", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+    ("phone", re.compile(r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{3}\)?[ .-]?)\d{3}[ .-]?\d{4}\b")),
+    ("azure_storage_key", re.compile(r"(?i)AccountKey\s*=\s*[A-Za-z0-9+/]{32,}={0,2}")),
+]
+
+_CONTENT_SAFETY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("jailbreak_instruction", re.compile(r"(?is)ignore\s+all\s+previous\s+instructions|reveal\s+system\s+prompt")),
+    ("self_harm", re.compile(r"(?i)how\s+to\s+self[- ]?harm|suicide\s+method")),
+    ("violence", re.compile(r"(?i)build\s+(a\s+)?bomb|violent\s+attack\s+plan")),
+    ("hate", re.compile(r"(?i)hate\s+speech|racial\s+slur")),
+]
+
+_DLP_ENFORCEMENT_MODE = os.environ.get("DLP_ENFORCEMENT_MODE", "block").strip().lower()
+_CONTENT_SAFETY_ENFORCEMENT_MODE = os.environ.get(
+    "CONTENT_SAFETY_ENFORCEMENT_MODE", "block"
+).strip().lower()
+
 
 def _extract_text_for_policy_scan(raw_bytes: bytes, max_chars: int = 10000) -> str:
     """Decode uploaded bytes to bounded UTF-8 text for deterministic policy checks."""
@@ -173,6 +225,96 @@ def _scan_input_policy(task_text: str, uploaded_text: str = "") -> str | None:
     return None
 
 
+def _classify_data_sensitivity(text: str) -> str:
+    """Classify data sensitivity for audit and optional policy enforcement."""
+    normalized = text.lower()
+    patterns = _scan_dlp_patterns(text)
+    if any(name in patterns for name in ["credit_card", "ssn", "azure_storage_key"]):
+        return "restricted"
+    if patterns or any(k in normalized for k in ["confidential", "private", "internal only"]):
+        return "confidential"
+    if any(k in normalized for k in ["public", "published", "marketing"]):
+        return "public"
+    return "internal"
+
+
+def _scan_dlp_patterns(text: str) -> list[str]:
+    """Return matching DLP pattern names from text."""
+    matches: list[str] = []
+    for name, pattern in _DLP_PATTERNS:
+        if pattern.search(text):
+            matches.append(name)
+    return matches
+
+
+def _scan_content_safety(text: str) -> tuple[str | None, float]:
+    """Heuristic content-safety score and category for background controls."""
+    max_risk = 0.0
+    category: str | None = None
+    for name, pattern in _CONTENT_SAFETY_PATTERNS:
+        if pattern.search(text):
+            category = name
+            if name == "jailbreak_instruction":
+                max_risk = max(max_risk, 0.9)
+            elif name in {"self_harm", "violence", "hate"}:
+                max_risk = max(max_risk, 0.85)
+            else:
+                max_risk = max(max_risk, 0.7)
+    return category, max_risk
+
+
+def _enforce_background_security(
+    *,
+    phase: str,
+    text: str,
+    auditor: AuditLogger,
+) -> None:
+    """Run background data protection checks and emit auditable controls."""
+    label = _classify_data_sensitivity(text)
+    patterns = _scan_dlp_patterns(text)
+    content_category, content_risk = _scan_content_safety(text)
+
+    auditor.log(
+        ActionType.DATA_CLASSIFICATION,
+        policy_decision=PolicyDecision.ALLOW,
+        outcome=Outcome.SUCCESS,
+        classification_label=label,
+        error_code=f"{phase}_classification",
+    )
+
+    dlp_should_block = _DLP_ENFORCEMENT_MODE == "block" and bool(patterns)
+    auditor.log(
+        ActionType.DLP_SCAN,
+        policy_decision=PolicyDecision.DENY if dlp_should_block else PolicyDecision.ALLOW,
+        outcome=Outcome.BLOCKED if dlp_should_block else Outcome.SUCCESS,
+        dlp_patterns=patterns,
+        classification_label=label,
+        risk_score=0.85 if dlp_should_block else (0.35 if patterns else 0.0),
+        error_code=f"{phase}_dlp",
+    )
+
+    safety_should_block = (
+        _CONTENT_SAFETY_ENFORCEMENT_MODE == "block" and content_category is not None
+    )
+    auditor.log(
+        ActionType.CONTENT_SAFETY_CHECK,
+        policy_decision=PolicyDecision.DENY if safety_should_block else PolicyDecision.ALLOW,
+        outcome=Outcome.BLOCKED if safety_should_block else Outcome.SUCCESS,
+        content_safety_category=content_category,
+        risk_score=content_risk,
+        error_code=f"{phase}_content_safety",
+    )
+
+    if dlp_should_block:
+        raise RuntimeError(
+            f"{phase} blocked by DLP policy: {', '.join(patterns)}"
+        )
+    if safety_should_block:
+        raise RuntimeError(
+            f"{phase} blocked by content safety policy: {content_category}"
+        )
+
+
 def _list_kill_switches() -> list[dict[str, Any]]:
     flags = []
     for metadata in _KILL_SWITCH_METADATA:
@@ -183,6 +325,228 @@ def _list_kill_switches() -> list[dict[str, Any]]:
             }
         )
     return flags
+
+
+def _request_run_context(req: Request) -> tuple[str, str]:
+    run_id = req.path_params.get("run_id") if hasattr(req, "path_params") else None
+    resolved_run_id = run_id or f"request-{getattr(req.state, 'correlation_id', uuid.uuid4())}"
+    run = _runs.get(run_id) if run_id else None
+    agent_type = str(run.get("agent_type")) if run else "control-plane"
+    return resolved_run_id, agent_type
+
+
+def _emit_request_audit_event(
+    req: Request,
+    *,
+    action_type: ActionType,
+    policy_decision: PolicyDecision,
+    outcome: Outcome,
+    error_code: str,
+    path: str | None = None,
+    risk_score: float = 0.0,
+) -> None:
+    try:
+        run_id, agent_type = _request_run_context(req)
+        correlation_id = getattr(req.state, "correlation_id", str(uuid.uuid4()))
+        auditor = AuditLogger(
+            run_id=run_id,
+            agent_type=agent_type,
+            correlation_id=correlation_id,
+        )
+        auditor.log(
+            action_type,
+            policy_decision=policy_decision,
+            outcome=outcome,
+            error_code=error_code,
+            path=path,
+            risk_score=risk_score,
+        )
+    except Exception as exc:
+        logger.warning("Failed to emit request audit event: %s", exc)
+
+
+def _normalize_claim_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        return {part for part in re.split(r"[\s,]+", value) if part}
+    if isinstance(value, list):
+        return {str(item) for item in value if str(item).strip()}
+    return {str(value)}
+
+
+def _compute_identity_signature(
+    *,
+    subject: str,
+    tenant_id: str,
+    roles: str,
+    scopes: str,
+    timestamp: str,
+    secret: str,
+) -> str:
+    payload = "|".join([subject, tenant_id, roles, scopes, timestamp])
+    digest = hmac.new(
+        secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+    ).digest()
+    return digest.hex()
+
+
+def _verify_identity_signature(
+    *,
+    subject: str,
+    tenant_id: str,
+    roles: str,
+    scopes: str,
+    timestamp: str,
+    signature: str,
+) -> tuple[bool, str | None]:
+    if not REQUIRE_IDENTITY_SIGNATURE:
+        return True, None
+
+    if not APIM_IDENTITY_SIGNING_SECRET:
+        logger.error("APIM_IDENTITY_SIGNING_SECRET not configured")
+        return False, "AUTHN_FAIL_MISSING_SIGNING_SECRET"
+
+    try:
+        ts_int = int(timestamp)
+    except ValueError:
+        return False, "AUTHN_FAIL_INVALID_SIGNATURE_TIMESTAMP"
+
+    now = int(time.time())
+    if abs(now - ts_int) > IDENTITY_SIGNATURE_MAX_AGE_SECONDS:
+        return False, "AUTHN_FAIL_SIGNATURE_TIMESTAMP_OUT_OF_RANGE"
+
+    expected = _compute_identity_signature(
+        subject=subject,
+        tenant_id=tenant_id,
+        roles=roles,
+        scopes=scopes,
+        timestamp=timestamp,
+        secret=APIM_IDENTITY_SIGNING_SECRET,
+    )
+    if not hmac.compare_digest(expected, signature):
+        return False, "AUTHN_FAIL_INVALID_SIGNATURE"
+
+    return True, None
+
+
+def _get_request_identity(req: Request) -> dict[str, Any] | None:
+    subject = (req.headers.get(_HDR_AUTH_SUBJECT) or "").strip()
+    tenant_id = (req.headers.get(_HDR_AUTH_TENANT_ID) or "").strip()
+    roles_raw = (req.headers.get(_HDR_AUTH_ROLES) or "").strip()
+    scopes_raw = (req.headers.get(_HDR_AUTH_SCOPES) or "").strip()
+    timestamp = (req.headers.get(_HDR_AUTH_TIMESTAMP) or "").strip()
+    signature = (req.headers.get(_HDR_AUTH_SIGNATURE) or "").strip()
+
+    if not subject or not tenant_id:
+        req.state.identity_error_code = "AUTHN_FAIL_MISSING_IDENTITY_HEADERS"
+        return None
+
+    if REQUIRE_IDENTITY_SIGNATURE and (not timestamp or not signature):
+        req.state.identity_error_code = "AUTHN_FAIL_MISSING_SIGNATURE_HEADERS"
+        return None
+
+    valid_sig, sig_error = _verify_identity_signature(
+        subject=subject,
+        tenant_id=tenant_id,
+        roles=roles_raw,
+        scopes=scopes_raw,
+        timestamp=timestamp,
+        signature=signature,
+    )
+    if not valid_sig:
+        req.state.identity_error_code = sig_error or "AUTHN_FAIL_SIGNATURE_VERIFICATION"
+        return None
+
+    return {
+        "subject": subject,
+        "tenant_id": tenant_id,
+        "roles": _normalize_claim_set(roles_raw),
+        "scopes": _normalize_claim_set(scopes_raw),
+    }
+
+
+def _require_identity(req: Request) -> dict[str, Any]:
+    if not ENABLE_APP_AUTHZ:
+        return {
+            "subject": "auth-disabled-subject",
+            "tenant_id": "auth-disabled-tenant",
+            "roles": set(),
+            "scopes": set(),
+        }
+
+    identity = _get_request_identity(req)
+    if identity is None:
+        identity_error = getattr(req.state, "identity_error_code", "AUTHN_FAIL_IDENTITY_REQUIRED")
+        event_type = (
+            ActionType.SIGNATURE_VERIFICATION_FAILURE
+            if identity_error != "AUTHN_FAIL_MISSING_IDENTITY_HEADERS"
+            else ActionType.POLICY_CHECK
+        )
+        _emit_request_audit_event(
+            req,
+            action_type=event_type,
+            policy_decision=PolicyDecision.DENY,
+            outcome=Outcome.BLOCKED,
+            error_code=identity_error,
+            path=str(req.url.path),
+            risk_score=0.7,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                "Validated identity headers are required "
+                "(X-Auth-Subject, X-Auth-Tenant-Id, X-Auth-Timestamp, X-Auth-Signature)"
+            ),
+        )
+    return identity
+
+
+def _is_admin(identity: dict[str, Any]) -> bool:
+    if not ENABLE_APP_AUTHZ:
+        return True
+    roles = identity.get("roles", set())
+    scopes = identity.get("scopes", set())
+    return bool(roles & _ADMIN_ROLE_VALUES) or bool(scopes & _ADMIN_SCOPE_VALUES)
+
+
+def _require_admin(req: Request) -> dict[str, Any]:
+    identity = _require_identity(req)
+    if not _is_admin(identity):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return identity
+
+
+def _authorize_run_access(req: Request, run: dict[str, Any]) -> None:
+    if not ENABLE_APP_AUTHZ:
+        return
+
+    identity = _require_identity(req)
+    if _is_admin(identity):
+        return
+
+    owner_subject = run.get("owner_subject")
+    owner_tenant_id = run.get("owner_tenant_id")
+    if (
+        owner_subject
+        and owner_tenant_id
+        and identity.get("subject") == owner_subject
+        and identity.get("tenant_id") == owner_tenant_id
+    ):
+        return
+
+    _emit_request_audit_event(
+        req,
+        action_type=ActionType.CROSS_TENANT_ACCESS_ATTEMPT,
+        policy_decision=PolicyDecision.DENY,
+        outcome=Outcome.BLOCKED,
+        error_code="AUTHZ_DENY_CROSS_TENANT_ACCESS",
+        path=str(req.url.path),
+        risk_score=0.85,
+    )
+
+    # Return not-found to avoid exposing run existence across tenants/users.
+    raise HTTPException(status_code=404, detail=f"Run {run.get('run_id')!r} not found")
 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -227,7 +591,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
 
 class KillSwitchMiddleware(BaseHTTPMiddleware):
-    _EXEMPT = {"/health", "/kill-switches", "/alerts"}
+    _EXEMPT = {"/health", "/kill-switches"}
 
     async def dispatch(self, request: Request, call_next):
         if request.url.path in self._EXEMPT or request.url.path.startswith("/stream/"):
@@ -252,6 +616,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         try:
             _rate_limiter.check(agent_id)
         except RateLimitExceeded as exc:
+            _emit_request_audit_event(
+                request,
+                action_type=ActionType.RATE_LIMIT_EXCEEDED,
+                policy_decision=PolicyDecision.DENY,
+                outcome=Outcome.BLOCKED,
+                error_code=f"RATE_LIMIT_EXCEEDED:{agent_id}",
+                path=str(request.url.path),
+                risk_score=0.6,
+            )
             return JSONResponse(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 content={
@@ -321,6 +694,7 @@ async def start_run(
     Start a sandboxed agent run.
     Accepts multipart/form-data (with optional file upload) or application/json.
     """
+    identity = _require_identity(req)
     content_type = req.headers.get("content-type", "")
 
     # JSON path
@@ -371,6 +745,8 @@ async def start_run(
         "created_at": now,
         "updated_at": now,
         "correlation_id": correlation_id,
+        "owner_subject": identity["subject"],
+        "owner_tenant_id": identity["tenant_id"],
         "uploaded_filename": uploaded_filename,
     }
 
@@ -430,6 +806,12 @@ async def _execute_run(
                 )
                 raise RuntimeError(f"Input blocked by policy: {task_violation}")
 
+            _enforce_background_security(
+                phase="input_task",
+                text=request.task,
+                auditor=auditor,
+            )
+
             # Stage uploaded file into the sandbox read area
             if uploaded_bytes and uploaded_filename:
                 import mimetypes
@@ -473,6 +855,12 @@ async def _execute_run(
                         f"Uploaded file blocked by policy: {file_violation}"
                     )
 
+                _enforce_background_security(
+                    phase="input_file",
+                    text=staged_text,
+                    auditor=auditor,
+                )
+
                 # Augment prompt so the model always sees document context.
                 request.task = (
                     f"{request.task}\n\n"
@@ -495,6 +883,19 @@ async def _execute_run(
             )
 
             result = await run_agent(request, workspace)
+
+            output_text = ""
+            if isinstance(result, dict):
+                output_candidate = result.get("output")
+                if isinstance(output_candidate, str):
+                    output_text = output_candidate
+
+            if output_text:
+                _enforce_background_security(
+                    phase="output",
+                    text=output_text,
+                    auditor=auditor,
+                )
 
         _runs[run_id]["status"] = RunStatus.COMPLETED
         _runs[run_id]["result"] = result
@@ -520,22 +921,25 @@ async def _execute_run(
 
 
 @app.get("/runs/{run_id}", response_model=RunStatusResponse)
-async def get_run(run_id: str):
+async def get_run(run_id: str, req: Request):
     run = _runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
+    _authorize_run_access(req, run)
     return RunStatusResponse(**run)
 
 
 @app.get("/stream/runs/{run_id}")
-async def stream_run_events(run_id: str):
+async def stream_run_events(run_id: str, req: Request):
     """
     Server-Sent Events stream of live audit events for a specific run.
     The browser connects here immediately after POST /runs and receives
     every OPA decision, sandbox check, and tool call result in real time.
     """
-    if run_id not in _runs:
+    run = _runs.get(run_id)
+    if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
+    _authorize_run_access(req, run)
 
     q = _run_event_queues.get(run_id)
     if q is None:
@@ -581,7 +985,7 @@ async def stream_run_events(run_id: str):
 
 
 @app.get("/runs/{run_id}/timeline")
-async def get_run_timeline(run_id: str):
+async def get_run_timeline(run_id: str, req: Request):
     """
     Query Log Analytics for the full post-run audit timeline.
     Returns the KQL query used alongside the results so the UI can display both.
@@ -589,6 +993,7 @@ async def get_run_timeline(run_id: str):
     run = _runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
+    _authorize_run_access(req, run)
 
     events = _la_client.query_run_timeline(run_id)
     kql = _la_client.get_kql_for_run(run_id)
@@ -618,14 +1023,114 @@ def _get_in_memory_events(run_id: str) -> list[dict]:
 @app.get("/alerts")
 async def get_alerts():
     """Return recent Sentinel analytics rule alerts."""
+    if not ENABLE_DEMO_FEATURES:
+        raise HTTPException(status_code=404, detail="Not found")
     alerts = _la_client.get_recent_sentinel_alerts(limit=10)
     return {"alerts": alerts}
 
 
+@app.get("/insights/sentinel-workbook")
+async def get_sentinel_workbook_queries():
+    """Return workbook-ready KQL pack and recommended Azure links."""
+    if not ENABLE_DEMO_FEATURES:
+        raise HTTPException(status_code=404, detail="Not found")
+    workbook_url = os.environ.get(
+        "SENTINEL_WORKBOOK_URL",
+        "https://portal.azure.com/#blade/Microsoft_Azure_Security_Insights/MainMenuBlade/~/workbooks",
+    )
+    security_portal_url = os.environ.get(
+        "SECURITY_PORTAL_DASHBOARD_URL",
+        "https://security.microsoft.com",
+    )
+    return {
+        "workbook_url": workbook_url,
+        "security_portal_url": security_portal_url,
+        "queries": _la_client.get_workbook_queries(),
+    }
+
+
+@app.get("/insights/security-dashboard")
+async def get_security_dashboard_queries():
+    """Return dashboard-focused query shortcuts for Sentinel and SOC workflows."""
+    if not ENABLE_DEMO_FEATURES:
+        raise HTTPException(status_code=404, detail="Not found")
+    q = _la_client.get_workbook_queries()
+    return {
+        "dashboard": {
+            "policy_denies": q["posture_overview"],
+            "dlp_interceptions": q["dlp_interceptions"],
+            "content_safety_blocks": q["content_safety_blocks"],
+            "token_budget": q["token_budget"],
+            "anomaly_candidates": q["anomaly_candidates"],
+        }
+    }
+
+
 @app.get("/kill-switches")
-async def list_kill_switches():
+async def list_kill_switches(req: Request):
     """Return current state of all feature flags."""
+    _require_admin(req)
     return {"flags": _list_kill_switches()}
+
+
+@app.get("/compliance/dsar/subject/{subject}")
+async def dsar_export(subject: str, tenant_id: str, req: Request):
+    """
+    Admin-only DSAR export for run metadata owned by a subject in a tenant.
+    Returns minimal metadata to support compliance workflows without exposing unrelated tenants.
+    """
+    _require_admin(req)
+
+    matches = []
+    for run in _runs.values():
+        if run.get("owner_subject") == subject and run.get("owner_tenant_id") == tenant_id:
+            matches.append(
+                {
+                    "run_id": run.get("run_id"),
+                    "status": str(run.get("status")),
+                    "created_at": run.get("created_at"),
+                    "updated_at": run.get("updated_at"),
+                    "agent_type": run.get("agent_type"),
+                    "correlation_id": run.get("correlation_id"),
+                }
+            )
+
+    _emit_request_audit_event(
+        req,
+        action_type=ActionType.ADMIN_DSAR_EXPORT,
+        policy_decision=PolicyDecision.ALLOW,
+        outcome=Outcome.SUCCESS,
+        error_code=f"ADMIN_ACTION_DSAR_EXPORT:{subject}:{tenant_id}:{len(matches)}",
+        path=str(req.url.path),
+        risk_score=0.45,
+    )
+
+    return {
+        "subject": subject,
+        "tenant_id": tenant_id,
+        "run_count": len(matches),
+        "runs": matches,
+        "note": (
+            "This endpoint returns orchestrator run metadata. "
+            "Retrieve immutable audit artifacts from AiAgentAudit_CL and audit blob storage using run_id/correlation_id."
+        ),
+    }
+
+
+@app.get("/compliance/reporting/queries")
+async def get_compliance_reporting_queries(req: Request):
+    """Admin-only compliance query pack for SOC/GRC reporting workflows."""
+    _require_admin(req)
+    queries = _la_client.get_workbook_queries()
+    return {
+        "queries": {
+            "processing_basis": queries["compliance_processing_basis"],
+            "classification_posture": queries["compliance_classification_posture"],
+            "dsar_exports": queries["compliance_dsar_exports"],
+            "admin_actions": queries["admin_action_timeline"],
+            "auth_failures": queries["auth_failure_timeline"],
+        }
+    }
 
 
 @app.put("/kill-switches/{flag_name}", status_code=status.HTTP_204_NO_CONTENT)
@@ -634,12 +1139,23 @@ async def toggle_kill_switch(flag_name: str, req: Request):
     Toggle an App Configuration feature flag from the UI.
     Body: {"enabled": true|false}
     """
+    _require_admin(req)
     allowed_flags = {metadata["name"] for metadata in _KILL_SWITCH_METADATA}
     if flag_name not in allowed_flags:
         raise HTTPException(status_code=400, detail=f"Unknown flag: {flag_name!r}")
 
     body = await req.json()
     enabled = bool(body.get("enabled", True))
+
+    _emit_request_audit_event(
+        req,
+        action_type=ActionType.ADMIN_KILL_SWITCH_TOGGLE,
+        policy_decision=PolicyDecision.ALLOW,
+        outcome=Outcome.SUCCESS,
+        error_code=f"ADMIN_ACTION_KILL_SWITCH_TOGGLE:{flag_name}:{enabled}",
+        path=str(req.url.path),
+        risk_score=0.4,
+    )
 
     try:
         from azure.appconfiguration import (
@@ -701,7 +1217,8 @@ async def approval_callback(
 
 
 @app.delete("/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def kill_run(run_id: str, body: KillRunRequest):
+async def kill_run(run_id: str, body: KillRunRequest, req: Request):
+    _require_admin(req)
     run = _runs.get(run_id)
     if not run:
         raise HTTPException(status_code=404, detail=f"Run {run_id!r} not found")
@@ -713,4 +1230,13 @@ async def kill_run(run_id: str, body: KillRunRequest):
     _runs[run_id]["status"] = RunStatus.KILLED
     _runs[run_id]["error"] = f"Killed by operator: {body.reason}"
     _runs[run_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _emit_request_audit_event(
+        req,
+        action_type=ActionType.ADMIN_RUN_DELETE,
+        policy_decision=PolicyDecision.ALLOW,
+        outcome=Outcome.SUCCESS,
+        error_code=f"ADMIN_ACTION_RUN_KILL:{run_id}",
+        path=str(req.url.path),
+        risk_score=0.5,
+    )
     logger.warning("Run %s killed: %s", run_id, body.reason)

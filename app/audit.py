@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
@@ -30,6 +31,42 @@ DCR_IMMUTABLE_ID = os.environ.get("DCR_IMMUTABLE_ID", "")  # Data Collection Rul
 AUDIT_STORAGE_ACCOUNT = os.environ.get("AUDIT_STORAGE_ACCOUNT", "")
 AUDIT_CONTAINER = "audit-logs"
 LOG_ANALYTICS_STREAM = "Custom-AiAgentAudit_CL"
+
+_REDACTION_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b\d{3}-\d{2}-\d{4}\b"), "[REDACTED_SSN]"),
+    (re.compile(r"\b(?:\d[ -]*?){13,19}\b"), "[REDACTED_CARD]"),
+    (
+        re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I),
+        "[REDACTED_EMAIL]",
+    ),
+    (
+        re.compile(r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{3}\)?[ .-]?)\d{3}[ .-]?\d{4}\b"),
+        "[REDACTED_PHONE]",
+    ),
+    (
+        re.compile(r"(?i)AccountKey\s*=\s*[A-Za-z0-9+/]{32,}={0,2}"),
+        "AccountKey=[REDACTED_KEY]",
+    ),
+    (re.compile(r"(?i)Bearer\s+[A-Za-z0-9._\-]+"), "Bearer [REDACTED_TOKEN]"),
+    (re.compile(r"\bghp_[A-Za-z0-9]{20,}\b"), "[REDACTED_GITHUB_PAT]"),
+]
+
+
+def redact_sensitive_text(value: str | None) -> str | None:
+    if not value:
+        return value
+    redacted = value
+    for pattern, replacement in _REDACTION_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
+
+
+def redact_audit_event_dict(event_dict: dict) -> dict:
+    sanitized = dict(event_dict)
+    for key in ["path", "destination", "error_code", "parent_run_id"]:
+        if isinstance(sanitized.get(key), str):
+            sanitized[key] = redact_sensitive_text(sanitized[key])
+    return sanitized
 
 
 class AuditLogger:
@@ -94,6 +131,13 @@ class AuditLogger:
         risk_score: float = 0.0,
         outcome: Outcome = Outcome.SUCCESS,
         error_code: Optional[str] = None,
+        classification_label: Optional[str] = None,
+        dlp_patterns: Optional[list[str]] = None,
+        content_safety_category: Optional[str] = None,
+        grounding_score: Optional[float] = None,
+        data_processing_basis: str = "security_monitoring",
+        consent_status: str = "not_required",
+        parent_run_id: Optional[str] = None,
     ) -> AuditEvent:
         event = AuditEvent(
             run_id=self.run_id,
@@ -107,22 +151,32 @@ class AuditLogger:
             risk_score=risk_score,
             outcome=outcome,
             error_code=error_code,
+            classification_label=classification_label,
+            dlp_patterns=dlp_patterns or [],
+            content_safety_category=content_safety_category,
+            grounding_score=grounding_score,
+            data_processing_basis=data_processing_basis,
+            consent_status=consent_status,
+            parent_run_id=parent_run_id,
             correlation_id=self.correlation_id,
         )
 
+        redacted_payload = redact_audit_event_dict(event.model_dump(mode="json"))
+        redacted_event = event.model_copy(update=redacted_payload)
+
         # Always log to stdout for container log capture
-        logger.info("audit", extra={"event": event.model_dump(mode="json")})
+        logger.info("audit", extra={"event": redacted_payload})
 
         # Push to SSE queue if a frontend listener is connected
         if self._on_event:
             try:
-                self._on_event(event.model_dump(mode="json"))
+                self._on_event(redacted_payload)
             except Exception:
                 pass
 
         # Non-blocking: fire and forget to Log Analytics + blob
-        self._send_to_log_analytics(event)
-        self._append_to_blob(event)
+        self._send_to_log_analytics(redacted_event)
+        self._append_to_blob(redacted_event)
 
         return event
 

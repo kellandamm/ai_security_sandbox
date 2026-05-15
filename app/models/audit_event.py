@@ -14,14 +14,27 @@ class ActionType(str, Enum):
     FILE_WRITE = "file_write"
     FILE_DELETE = "file_delete"
     NETWORK_CALL = "network_call"
+    HTTP_GET = "http_get"
+    HTTP_POST = "http_post"
     OPENAI_CALL = "openai_call"
     POLICY_CHECK = "policy_check"
+    DLP_SCAN = "dlp_scan"
+    DATA_CLASSIFICATION = "data_classification"
+    CONTENT_SAFETY_CHECK = "content_safety_check"
+    GROUNDING_CHECK = "grounding_check"
+    DELEGATION_CHECK = "delegation_check"
     APPROVAL_REQUEST = "approval_request"
     APPROVAL_RESPONSE = "approval_response"
     KILL_SWITCH_CHECK = "kill_switch_check"
     RUN_START = "run_start"
     RUN_COMPLETE = "run_complete"
     RUN_ABORT = "run_abort"
+    SIGNATURE_VERIFICATION_FAILURE = "signature_verification_failure"
+    CROSS_TENANT_ACCESS_ATTEMPT = "cross_tenant_access_attempt"
+    ADMIN_KILL_SWITCH_TOGGLE = "admin_kill_switch_toggle"
+    ADMIN_RUN_DELETE = "admin_run_delete"
+    ADMIN_DSAR_EXPORT = "admin_dsar_export"
+    RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
 
 
 class PolicyDecision(str, Enum):
@@ -54,6 +67,13 @@ class AuditEvent(BaseModel):
     risk_score: float = 0.0
     outcome: Outcome = Outcome.SUCCESS
     error_code: str | None = None
+    classification_label: str | None = None
+    dlp_patterns: list[str] = Field(default_factory=list)
+    content_safety_category: str | None = None
+    grounding_score: float | None = None
+    data_processing_basis: str = "security_monitoring"
+    consent_status: str = "not_required"
+    parent_run_id: str | None = None
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     def to_log_analytics_row(self) -> dict:
@@ -72,5 +92,12 @@ class AuditEvent(BaseModel):
             "risk_score": self.risk_score,
             "outcome": self.outcome.value,
             "error_code": self.error_code or "",
+            "classification_label": self.classification_label or "",
+            "dlp_patterns": ",".join(self.dlp_patterns),
+            "content_safety_category": self.content_safety_category or "",
+            "grounding_score": self.grounding_score if self.grounding_score is not None else 0.0,
+            "data_processing_basis": self.data_processing_basis,
+            "consent_status": self.consent_status,
+            "parent_run_id": self.parent_run_id or "",
             "correlation_id": self.correlation_id,
         }

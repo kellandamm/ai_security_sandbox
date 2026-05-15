@@ -61,6 +61,13 @@ AiAgentAudit_CL
     risk_score     = risk_score_d,
     token_count    = token_count_d,
     content_hash   = content_hash_s,
+    classification_label = classification_label_s,
+    dlp_patterns   = dlp_patterns_s,
+    content_safety_category = content_safety_category_s,
+    grounding_score = grounding_score_d,
+    data_processing_basis = data_processing_basis_s,
+    consent_status = consent_status_s,
+    parent_run_id  = parent_run_id_s,
     correlation_id = correlation_id_s
 """
         try:
@@ -84,7 +91,103 @@ AiAgentAudit_CL
 | where run_id_s == "{run_id}"
 | order by TimeGenerated asc
 | project TimeGenerated, action_type_s, policy_decision_s,
-          path_s, outcome_s, error_code_s, risk_score_d"""
+          path_s, outcome_s, error_code_s, risk_score_d,
+          classification_label_s, dlp_patterns_s, content_safety_category_s,
+          data_processing_basis_s, consent_status_s"""
+
+    def get_workbook_queries(self) -> dict[str, str]:
+        """Return query pack for Sentinel workbook and security dashboard creation."""
+        return {
+            "posture_overview": """
+AiAgentAudit_CL
+| summarize events=count(), blocks=countif(policy_decision_s == \"deny\" or outcome_s == \"blocked\") by action_type_s
+| order by blocks desc, events desc
+""".strip(),
+            "agent_risk_heatmap": """
+AiAgentAudit_CL
+| summarize avg_risk=avg(risk_score_d), max_risk=max(risk_score_d), events=count() by agent_type_s, action_type_s
+| order by avg_risk desc
+""".strip(),
+            "dlp_interceptions": """
+AiAgentAudit_CL
+| where action_type_s == \"dlp_scan\"
+| where policy_decision_s == \"deny\" or outcome_s == \"blocked\" or dlp_patterns_s != \"\"
+| project TimeGenerated, run_id_s, agent_type_s, dlp_patterns_s, classification_label_s, risk_score_d, error_code_s, correlation_id_s
+| order by TimeGenerated desc
+""".strip(),
+            "content_safety_blocks": """
+AiAgentAudit_CL
+| where action_type_s == \"content_safety_check\"
+| where policy_decision_s == \"deny\" or outcome_s == \"blocked\"
+| project TimeGenerated, run_id_s, agent_type_s, content_safety_category_s, risk_score_d, error_code_s, correlation_id_s
+| order by TimeGenerated desc
+""".strip(),
+            "kill_switch_activity": """
+AiAgentAudit_CL
+| where action_type_s == \"kill_switch_check\"
+| summarize checks=count(), blocked=countif(outcome_s == \"blocked\") by run_id_s, agent_type_s
+| order by blocked desc, checks desc
+""".strip(),
+            "token_budget": """
+AiAgentAudit_CL
+| where action_type_s == \"openai_call\"
+| summarize total_tokens=sum(token_count_d), avg_tokens=avg(token_count_d), calls=count() by run_id_s, agent_type_s
+| order by total_tokens desc
+""".strip(),
+            "anomaly_candidates": """
+let per_run = AiAgentAudit_CL
+| summarize total_events=count(), total_tokens=sum(token_count_d), max_risk=max(risk_score_d) by run_id_s, agent_type_s;
+let baselines = per_run | summarize avg_events=avg(total_events), avg_tokens=avg(total_tokens);
+per_run
+| join kind=inner baselines on 1==1
+| where total_events > (avg_events * 3.0) or total_tokens > (avg_tokens * 3.0) or max_risk >= 0.8
+| project run_id_s, agent_type_s, total_events, total_tokens, max_risk, avg_events, avg_tokens
+| order by max_risk desc, total_events desc
+        """.strip(),
+                "auth_failure_timeline": """
+        AiAgentAudit_CL
+        | where action_type_s in ("signature_verification_failure", "policy_check")
+        | where outcome_s == "blocked"
+        | summarize failures=count() by error_code_s, correlation_id_s, bin(TimeGenerated, 1m)
+        | order by TimeGenerated desc
+        """.strip(),
+                "admin_action_timeline": """
+        AiAgentAudit_CL
+            | where action_type_s in ("admin_kill_switch_toggle", "admin_run_delete", "admin_dsar_export")
+        | project TimeGenerated, action_type_s, error_code_s, path_s, correlation_id_s
+        | order by TimeGenerated desc
+        """.strip(),
+                "cross_tenant_probing": """
+        AiAgentAudit_CL
+        | where action_type_s == "cross_tenant_access_attempt"
+        | summarize attempts=count(), paths=make_set(path_s) by correlation_id_s, bin(TimeGenerated, 5m)
+        | where attempts >= 3
+        | order by attempts desc, TimeGenerated desc
+        """.strip(),
+                "rate_limit_spikes": """
+        AiAgentAudit_CL
+        | where action_type_s == "rate_limit_exceeded"
+        | summarize blocked=count() by error_code_s, path_s, bin(TimeGenerated, 5m)
+        | where blocked >= 5
+        | order by blocked desc, TimeGenerated desc
+        """.strip(),
+                "compliance_processing_basis": """
+            AiAgentAudit_CL
+            | summarize events=count() by data_processing_basis_s, consent_status_s
+            | order by events desc
+        """.strip(),
+                "compliance_classification_posture": """
+            AiAgentAudit_CL
+            | summarize events=count(), blocked=countif(outcome_s == "blocked") by classification_label_s, action_type_s
+            | order by blocked desc, events desc
+        """.strip(),
+                "compliance_dsar_exports": """
+            AiAgentAudit_CL
+            | where action_type_s == "admin_dsar_export"
+            | project TimeGenerated, run_id_s, correlation_id_s, error_code_s, path_s
+            | order by TimeGenerated desc
+""".strip(),
+        }
 
     def get_recent_sentinel_alerts(self, limit: int = 10) -> list[dict[str, Any]]:
         """

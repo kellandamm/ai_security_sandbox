@@ -8,6 +8,11 @@ export type ActionType =
   | "openai_call"
   | "http_get"
   | "http_post"
+  | "dlp_scan"
+  | "data_classification"
+  | "content_safety_check"
+  | "grounding_check"
+  | "delegation_check"
   | "kill_switch_check"
   | "policy_check"
   | "approval_request"
@@ -33,6 +38,11 @@ export interface AuditEvent {
   risk_score: number;
   outcome: Outcome;
   error_code?: string;
+  classification_label?: string;
+  dlp_patterns?: string;
+  content_safety_category?: string;
+  grounding_score?: number;
+  parent_run_id?: string;
   correlation_id: string;
 }
 

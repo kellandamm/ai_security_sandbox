@@ -32,6 +32,9 @@ const TACTIC_COLORS: Record<string, string> = {
   LateralMovement: "badge-red",
 };
 
+const DEMO_FEATURES_ENABLED =
+  (import.meta.env.VITE_ENABLE_DEMO_FEATURES ?? "false").toLowerCase() === "true";
+
 function formatRelative(ts: string): string {
   const diff = Date.now() - new Date(ts).getTime();
   if (diff < 60_000) return `${Math.round(diff / 1000)}s ago`;
@@ -129,6 +132,9 @@ export default function SecurityEventFeed({ apiBase = "/api", getAuthHeaders }: 
   const [lastFetched, setLastFetched] = useState<Date | null>(null);
 
   const fetchAlerts = useCallback(async () => {
+    if (!DEMO_FEATURES_ENABLED) {
+      return;
+    }
     setLoading(true);
     try {
       const authHeaders = getAuthHeaders ? await getAuthHeaders() : {};
@@ -147,6 +153,9 @@ export default function SecurityEventFeed({ apiBase = "/api", getAuthHeaders }: 
 
   // Auto-refresh every 30 seconds
   useEffect(() => {
+    if (!DEMO_FEATURES_ENABLED) {
+      return;
+    }
     fetchAlerts();
     const interval = setInterval(fetchAlerts, 30_000);
     return () => clearInterval(interval);
@@ -154,6 +163,22 @@ export default function SecurityEventFeed({ apiBase = "/api", getAuthHeaders }: 
 
   const highCount = alerts.filter((a) => a.severity === "High").length;
   const medCount = alerts.filter((a) => a.severity === "Medium").length;
+
+  if (!DEMO_FEATURES_ENABLED) {
+    return (
+      <div className="panel flex flex-col h-full">
+        <div className="panel-header">
+          <div className="flex items-center gap-2">
+            <Bell className="w-4 h-4 text-soc-muted" />
+            <span className="font-semibold text-soc-text">Sentinel Alerts</span>
+          </div>
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4 text-xs text-soc-muted">
+          Disabled for this environment.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="panel flex flex-col h-full">

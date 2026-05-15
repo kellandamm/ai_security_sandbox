@@ -9,7 +9,9 @@ An Azure-hosted AI agent sandbox that demonstrates **enterprise-grade containmen
 - [Solution accelerator guide](docs/solution-accelerator-guide.md) — what the accelerator does, who it is for, and how the components work together.
 - [Testing guide](docs/testing-guide.md) — local validation, CI-style checks, and deployment smoke testing.
 - [Public release checklist](docs/public-release-checklist.md) — hygiene, secret review, repository settings, and release gates before public distribution.
-- [Demo playbook](DEMO_PLAYBOOK.md) — repeatable security demo flow for runtime controls, evidence, and SOC response.
+- [Incident response runbook](docs/incident-response-runbook.md) — SOC triage and containment procedures for sandbox security events.
+- [Data retention policy](docs/data-retention-policy.md) — retention windows, immutability controls, and disposal behavior.
+- [Portal demo talk track](docs/portal-demo-talk-track.md) — end-to-end demo motion for Azure/Sentinel/App Configuration portals.
 
 ---
 
@@ -99,12 +101,21 @@ All rules from the article are implemented in `app/sandbox.py`:
 - **Log Analytics Workspace** — 90-day retention, 5 GB/day cap, CanNotDelete lock
 - **Application Insights** — APM, request tracing
 - Custom table `AiAgentAudit_CL` via Data Collection Rule — queryable structured events
-- **Microsoft Sentinel** onboarded with 4 analytics rules:
+- **Microsoft Sentinel** onboarded with scheduled analytics rules for:
   - Frequent OPA denials (>5 in 10 min)
   - File write outside sandbox path
   - Token spike (>10k tokens/min per run)
   - Kill switch activated
+  - Unsafe egress / exfiltration attempts
+  - Repeated identity signature verification failures
+  - Cross-tenant run probing patterns
+  - Rate-limit spike bursts
+  - Privileged admin action timeline visibility
 - All audit events also written to WORM append-only blob (tamper-evident)
+- Background DLP and content safety controls default to `block` mode unless explicitly overridden.
+- Audit sinks redact common PII/secret patterns before Log Analytics, SSE, and append-blob persistence.
+- Audit records include compliance metadata (`data_processing_basis`, `consent_status`) for reporting workflows.
+- Admin DSAR metadata export endpoint: `GET /compliance/dsar/subject/{subject}?tenant_id=<tenant>`.
 
 ### 6. Rate Limiting
 - **Azure API Management**: `rate-limit-by-key` (100 req/60s per agent-id) + `quota-by-key` (10k/day)
@@ -268,11 +279,56 @@ pwsh ./scripts/smoke-test.ps1 `
 
 The smoke test checks:
 - unauthenticated APIM access returns `401`
-- authenticated `/kill-switches` returns `200`
+- authenticated admin access to `/kill-switches` returns `200`
 - `/runs` returns `202` and a `run_id`
 - the SSE stream emits at least one event
 - the run reaches `completed`
 - `/runs/{run_id}/timeline` returns recorded events
+
+### 3c. Rollout notes (signed identity headers)
+
+The backend now trusts identity only when APIM forwards a signed identity envelope.
+To avoid request failures, deploy APIM policy and backend together in one rollout window.
+
+Required headers from APIM to backend:
+- `X-Auth-Subject`
+- `X-Auth-Tenant-Id`
+- `X-Auth-Roles`
+- `X-Auth-Scopes`
+- `X-Auth-Timestamp`
+- `X-Auth-Signature`
+
+Rollout sequence:
+1. Pre-check: ensure you can deploy both infra and app in the same maintenance window.
+2. Deploy infra changes so APIM policy and runtime app settings are updated with the same signing secret.
+3. Deploy backend image containing signature validation logic.
+4. Run smoke tests with a token that has admin role/scope when validating `/kill-switches`.
+5. Verify direct orchestrator access is still blocked and APIM path works end-to-end.
+
+Production flags and secrets:
+- `REQUIRE_IDENTITY_SIGNATURE=true`
+- `ENABLE_APP_AUTHZ=true`
+- `APIM_IDENTITY_SIGNING_SECRET` must match between APIM and orchestrator runtime.
+- `IDENTITY_SIGNATURE_MAX_AGE_SECONDS` defaults to `300`; adjust only if clock skew requires it.
+
+Post-deploy verification:
+1. Through APIM with a valid token, `POST /sandbox/runs` returns `202`.
+2. Through APIM with an admin token, `GET /sandbox/kill-switches` returns `200`.
+3. Through APIM with a non-admin token, `GET /sandbox/kill-switches` returns `403`.
+4. Direct call to orchestrator `/runs` without APIM headers returns `403`.
+5. A normal run reaches `completed` and timeline retrieval works.
+
+Change impact:
+1. `POST /sandbox/runs` now requires valid signed identity headers from APIM; missing/invalid signature returns `401`.
+2. `GET /sandbox/runs/{run_id}`, `GET /sandbox/stream/runs/{run_id}`, and `GET /sandbox/runs/{run_id}/timeline` are owner-or-admin only; non-owner access returns `404` to prevent run enumeration.
+3. `GET /sandbox/kill-switches`, `PUT /sandbox/kill-switches/{flag_name}`, and `DELETE /sandbox/runs/{run_id}` are admin-only; non-admin access returns `403`.
+4. APIM now strips inbound `X-Auth-*` headers and reissues them after JWT validation; clients must not send these headers directly.
+5. Emergency fallback (`REQUIRE_IDENTITY_SIGNATURE=false`) weakens trust guarantees and should be time-boxed and audited.
+
+Rollback plan:
+1. Prefer full rollback by reverting APIM policy and backend together to previous known-good artifacts.
+2. Emergency-only fallback: set `REQUIRE_IDENTITY_SIGNATURE=false` temporarily on orchestrator, then restore to `true` after APIM policy is healthy.
+3. Keep `ENABLE_APP_AUTHZ=true` during rollback unless you have a separate incident response exception.
 
 ### 4. Verify security controls
 

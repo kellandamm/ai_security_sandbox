@@ -27,6 +27,10 @@ param deployerPrincipalId string = ''
 @description('Shared secret APIM injects before forwarding requests to the orchestrator')
 param orchestratorGatewaySecret string = newGuid()
 
+@secure()
+@description('Shared secret APIM uses to sign forwarded identity headers')
+param apimIdentitySigningSecret string = newGuid()
+
 var abbrs = loadJsonContent('abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = { 'azd-env-name': environmentName, project: 'ai-security-sandbox' }
@@ -108,6 +112,7 @@ module compute 'modules/compute.bicep' = {
     auditStorageAccountName: storage.outputs.auditStorageAccountName
     privateEndpointSubnetId: networking.outputs.privateEndpointSubnetId
     privateDnsZoneAcrId: networking.outputs.privateDnsZoneAcrId
+    apimIdentitySigningSecret: apimIdentitySigningSecret
   }
 }
 
@@ -140,6 +145,7 @@ module orchestratorWebApp 'modules/orchestrator_webapp.bicep' = {
     agentJobName: compute.outputs.agentJobName
     appConfigEndpoint: killSwitch.outputs.appConfigEndpoint
     orchestratorGatewaySecret: orchestratorGatewaySecret
+    apimIdentitySigningSecret: apimIdentitySigningSecret
   }
 }
 
@@ -157,6 +163,7 @@ module apim 'modules/apim.bicep' = {
     aadTenantId: aadTenantId
     aadClientId: aadClientId
     orchestratorGatewaySecret: orchestratorGatewaySecret
+    apimIdentitySigningSecret: apimIdentitySigningSecret
     publisherEmail: approverEmail
   }
 }

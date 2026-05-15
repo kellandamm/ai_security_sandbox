@@ -79,6 +79,13 @@ resource auditTable 'Microsoft.OperationalInsights/workspaces/tables@2022-10-01'
         { name: 'risk_score', type: 'real' }
         { name: 'outcome', type: 'string' }
         { name: 'error_code', type: 'string' }
+        { name: 'classification_label', type: 'string' }
+        { name: 'dlp_patterns', type: 'string' }
+        { name: 'content_safety_category', type: 'string' }
+        { name: 'grounding_score', type: 'real' }
+        { name: 'data_processing_basis', type: 'string' }
+        { name: 'consent_status', type: 'string' }
+        { name: 'parent_run_id', type: 'string' }
         { name: 'correlation_id', type: 'string' }
       ]
     }
@@ -121,6 +128,13 @@ resource auditDcr 'Microsoft.Insights/dataCollectionRules@2022-06-01' = {
           { name: 'risk_score', type: 'real' }
           { name: 'outcome', type: 'string' }
           { name: 'error_code', type: 'string' }
+          { name: 'classification_label', type: 'string' }
+          { name: 'dlp_patterns', type: 'string' }
+          { name: 'content_safety_category', type: 'string' }
+          { name: 'grounding_score', type: 'real' }
+          { name: 'data_processing_basis', type: 'string' }
+          { name: 'consent_status', type: 'string' }
+          { name: 'parent_run_id', type: 'string' }
           { name: 'correlation_id', type: 'string' }
         ]
       }
@@ -292,6 +306,114 @@ resource ruleChatExfiltration 'Microsoft.SecurityInsights/alertRules@2023-02-01-
     suppressionDuration: 'PT30M'
     suppressionEnabled: false
     tactics: ['Exfiltration', 'Discovery']
+  }
+  dependsOn: [sentinel, auditTable]
+}
+
+// Rule 6: Repeated signature verification failures suggest identity tampering/replay
+resource ruleSignatureFailures 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
+  name: guid('signature-failures-${resourceToken}')
+  scope: logAnalytics
+  kind: 'Scheduled'
+  properties: {
+    displayName: 'Secure Agent API: Repeated Identity Signature Failures'
+    description: 'Multiple signed identity validation failures detected in a short window, indicating header tampering, replay, or brute-force attempts.'
+    severity: 'High'
+    enabled: true
+    query: '''
+      AiAgentAudit_CL
+      | where action_type == "signature_verification_failure"
+      | where outcome == "blocked"
+      | summarize Failures=count(), FirstSeen=min(TimeGenerated), LastSeen=max(TimeGenerated) by error_code, correlation_id, bin(TimeGenerated, 5m)
+      | where Failures >= 3
+    '''
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
+    triggerOperator: 'GreaterThan'
+    triggerThreshold: 0
+    suppressionDuration: 'PT15M'
+    suppressionEnabled: false
+    tactics: ['CredentialAccess', 'DefenseEvasion']
+  }
+  dependsOn: [sentinel, auditTable]
+}
+
+// Rule 7: Repeated cross-tenant lookup attempts indicate run enumeration/probing
+resource ruleCrossTenantProbe 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
+  name: guid('cross-tenant-probe-${resourceToken}')
+  scope: logAnalytics
+  kind: 'Scheduled'
+  properties: {
+    displayName: 'Secure Agent API: Cross-Tenant Run Probing'
+    description: 'Repeated cross-tenant run access attempts were blocked and should be investigated as tenant isolation probing.'
+    severity: 'High'
+    enabled: true
+    query: '''
+      AiAgentAudit_CL
+      | where action_type == "cross_tenant_access_attempt"
+      | summarize Attempts=count(), Paths=make_set(path) by correlation_id, bin(TimeGenerated, 5m)
+      | where Attempts >= 3
+    '''
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
+    triggerOperator: 'GreaterThan'
+    triggerThreshold: 0
+    suppressionDuration: 'PT15M'
+    suppressionEnabled: false
+    tactics: ['Discovery', 'LateralMovement']
+  }
+  dependsOn: [sentinel, auditTable]
+}
+
+// Rule 8: Rate-limit bursts can indicate API flooding or token exhaustion attempts
+resource ruleRateLimitSpike 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
+  name: guid('rate-limit-spike-${resourceToken}')
+  scope: logAnalytics
+  kind: 'Scheduled'
+  properties: {
+    displayName: 'Secure Agent API: Rate-Limit Spike'
+    description: 'A burst of rate-limit blocks indicates potential flooding or abusive traffic patterns.'
+    severity: 'Medium'
+    enabled: true
+    query: '''
+      AiAgentAudit_CL
+      | where action_type == "rate_limit_exceeded"
+      | summarize Blocked=count() by error_code, path, bin(TimeGenerated, 5m)
+      | where Blocked >= 5
+    '''
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
+    triggerOperator: 'GreaterThan'
+    triggerThreshold: 0
+    suppressionDuration: 'PT10M'
+    suppressionEnabled: false
+    tactics: ['Impact']
+  }
+  dependsOn: [sentinel, auditTable]
+}
+
+// Rule 9: Admin control-plane actions must be visible for privileged operation auditing
+resource ruleAdminActions 'Microsoft.SecurityInsights/alertRules@2023-02-01-preview' = {
+  name: guid('admin-actions-${resourceToken}')
+  scope: logAnalytics
+  kind: 'Scheduled'
+  properties: {
+    displayName: 'Secure Agent API: Privileged Admin Action Performed'
+    description: 'Kill switch toggles and run termination actions were performed and require SOC visibility.'
+    severity: 'Medium'
+    enabled: true
+    query: '''
+      AiAgentAudit_CL
+      | where action_type in ("admin_kill_switch_toggle", "admin_run_delete", "admin_dsar_export")
+      | project TimeGenerated, action_type, error_code, path, correlation_id, run_id, agent_type
+    '''
+    queryFrequency: 'PT5M'
+    queryPeriod: 'PT5M'
+    triggerOperator: 'GreaterThan'
+    triggerThreshold: 0
+    suppressionDuration: 'PT5M'
+    suppressionEnabled: false
+    tactics: ['PrivilegeEscalation', 'Impact']
   }
   dependsOn: [sentinel, auditTable]
 }

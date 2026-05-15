@@ -110,6 +110,9 @@ hooks:
 
         az webapp restart --resource-group $resourceGroup --name $frontendWebAppName
         ./scripts/configure-frontend-auth.ps1 -FrontendUrl $frontendUrl -WebAppName $frontendWebAppName -ResourceGroup $resourceGroup -SpaClientId $aadClientId
+
+        $workspaceId = azd env get-value LOG_ANALYTICS_WORKSPACE_ID
+        ./scripts/deploy-sentinel-workbook.ps1 -ResourceGroup $resourceGroup -WorkspaceResourceId $workspaceId
       interactive: false
       continueOnError: false
     posix:
@@ -143,6 +146,7 @@ hooks:
         az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$ORCHESTRATOR_WEBAPP_NAME"
         az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$FRONTEND_WEBAPP_NAME"
         ./scripts/configure-frontend-auth.sh "$FRONTEND_URL" "$FRONTEND_WEBAPP_NAME" "$AZURE_RESOURCE_GROUP" "$AAD_CLIENT_ID"
+        ./scripts/deploy-sentinel-workbook.sh "$AZURE_RESOURCE_GROUP" "$(azd env get-value LOG_ANALYTICS_WORKSPACE_ID)"
       interactive: false
       continueOnError: false
 

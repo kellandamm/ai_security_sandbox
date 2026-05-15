@@ -19,6 +19,11 @@ function getPortalLinks(runId: string) {
       "https://portal.azure.com/#blade/AppInsightsExtension/UsageAnalysisBlade",
     apim:
       "https://portal.azure.com/#view/Microsoft_Azure_ApiManagement/ApiManagementMenuBlade/~/overview",
+    sentinelWorkbook:
+      import.meta.env.VITE_SENTINEL_WORKBOOK_URL ??
+      "https://portal.azure.com/#blade/Microsoft_Azure_Security_Insights/MainMenuBlade/~/workbooks",
+    securityPortal:
+      import.meta.env.VITE_SECURITY_PORTAL_DASHBOARD_URL ?? "https://security.microsoft.com",
     searchHint: `run_id == "${encoded}"`,
   };
 }
@@ -101,6 +106,12 @@ export default function AzureEvidencePanel({ runId, status, events }: Props) {
             </a>
             <a className="btn btn-ghost text-xs" href={links?.apim} target="_blank" rel="noopener noreferrer">
               APIM <ExternalLink className="h-3 w-3" />
+            </a>
+            <a className="btn btn-ghost text-xs" href={links?.sentinelWorkbook} target="_blank" rel="noopener noreferrer">
+              Sentinel Workbook <ExternalLink className="h-3 w-3" />
+            </a>
+            <a className="btn btn-ghost text-xs" href={links?.securityPortal} target="_blank" rel="noopener noreferrer">
+              Security Portal <ExternalLink className="h-3 w-3" />
             </a>
           </div>
           {runId && (

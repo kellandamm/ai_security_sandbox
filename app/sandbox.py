@@ -53,6 +53,13 @@ _SAFE_FILENAME_RE = re.compile(r"^[a-zA-Z0-9._\-/]+$")
 _VALID_VIRTUAL_PATH_RE = re.compile(
     r"^/workspace/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(read|write)/[a-zA-Z0-9._\-/]+$"
 )
+_SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("restricted", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("restricted", re.compile(r"\b(?:\d[ -]*?){13,19}\b")),
+    ("restricted", re.compile(r"(?i)AccountKey\s*=\s*[A-Za-z0-9+/]{32,}={0,2}")),
+    ("confidential", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+    ("confidential", re.compile(r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{3}\)?[ .-]?)\d{3}[ .-]?\d{4}\b")),
+]
 
 
 # ── Exceptions ─────────────────────────────────────────────────────────────────
@@ -255,6 +262,19 @@ class EphemeralWorkspace:
 
     # ── Public file operations (Rule 8: virtual paths only) ──────────────────
 
+    @staticmethod
+    def _classify_content_label(content: bytes) -> str:
+        text = content.decode("utf-8", errors="ignore")
+        lowered = text.lower()
+        for label, pattern in _SENSITIVE_PATTERNS:
+            if pattern.search(text):
+                return label
+        if any(token in lowered for token in ["confidential", "private", "internal only"]):
+            return "confidential"
+        if any(token in lowered for token in ["public", "published", "marketing"]):
+            return "public"
+        return "internal"
+
     def write_file(
         self, virtual_path: str, content: bytes, content_type: str = "text/plain"
     ) -> str:
@@ -278,11 +298,13 @@ class EphemeralWorkspace:
 
         # Rule 9: audit BEFORE write
         content_hash = hashlib.sha256(content).hexdigest()
+        classification_label = self._classify_content_label(content)
         self._auditor.log(
             ActionType.FILE_WRITE,
             policy_decision=PolicyDecision.ALLOW,
             path=canon_path,
             content_hash=content_hash,
+            classification_label=classification_label,
             outcome=Outcome.SUCCESS,
         )
 
@@ -324,12 +346,14 @@ class EphemeralWorkspace:
             raise
 
         content_hash = hashlib.sha256(content).hexdigest()
+        classification_label = self._classify_content_label(content)
         # Rule 9: audit after read
         self._auditor.log(
             ActionType.FILE_READ,
             policy_decision=PolicyDecision.ALLOW,
             path=canon_path,
             content_hash=content_hash,
+            classification_label=classification_label,
             outcome=Outcome.SUCCESS,
         )
         return content
@@ -359,5 +383,6 @@ class EphemeralWorkspace:
             ActionType.FILE_DELETE,
             policy_decision=PolicyDecision.ALLOW,
             path=canon_path,
+            classification_label="internal",
             outcome=Outcome.SUCCESS,
         )

@@ -44,7 +44,10 @@ function formatRunResult(result: unknown): string {
   return String(result);
 }
 
-export default function AgentChatWorkspace({ apiBase, getAuthHeaders }: Props) {
+export default function AgentChatWorkspace({
+  apiBase,
+  getAuthHeaders,
+}: Props) {
   const [agentType, setAgentType] = useState<AgentType>("data-analyst");
   const [input, setInput] = useState("");
   const [file, setFile] = useState<File | null>(null);

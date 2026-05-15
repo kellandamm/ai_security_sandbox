@@ -48,6 +48,17 @@ APPROVAL_LOGIC_APP_URL = os.environ.get("APPROVAL_LOGIC_APP_URL", "")
 _pending_approvals: dict[str, dict[str, Any]] = {}
 
 
+def _classify_text_label(text: str) -> str:
+    lowered = text.lower()
+    if any(token in lowered for token in ["ssn", "accountkey=", "secret", "token", "password"]):
+        return "restricted"
+    if any(token in lowered for token in ["confidential", "private", "internal only"]):
+        return "confidential"
+    if any(token in lowered for token in ["public", "published", "marketing"]):
+        return "public"
+    return "internal"
+
+
 def register_approval_future(run_id: str, callback_token: str) -> asyncio.Future:
     loop = asyncio.get_event_loop()
     fut: asyncio.Future = loop.create_future()
@@ -371,10 +382,12 @@ async def _execute_tool(
                 return {"error": f"FQDN not in egress allowlist: {parsed.netloc}"}
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url)
+            classification_label = _classify_text_label(resp.text[:4096])
             auditor.log(
                 ActionType.NETWORK_CALL,
                 policy_decision=PolicyDecision.ALLOW,
                 destination=parsed.netloc,
+                classification_label=classification_label,
                 outcome=Outcome.SUCCESS,
             )
             return {"status_code": resp.status_code, "body": resp.text[:4096]}
@@ -387,6 +400,7 @@ async def _execute_tool(
             getattr(ActionType, tool_name.upper(), ActionType.POLICY_CHECK),
             outcome=Outcome.FAILURE,
             error_code=str(exc),
+            classification_label="internal",
         )
         return {"error": str(exc)}
 
