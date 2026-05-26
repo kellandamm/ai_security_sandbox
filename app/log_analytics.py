@@ -100,85 +100,174 @@ AiAgentAudit_CL
         return {
             "posture_overview": """
 AiAgentAudit_CL
+<<<<<<< HEAD
+| summarize events=count(), blocks=countif(
+    policy_decision_s == \"deny\" or outcome_s == \"blocked\")
+    by action_type_s
+=======
 | summarize events=count(), blocks=countif(policy_decision_s == \"deny\" or outcome_s == \"blocked\") by action_type_s
+>>>>>>> origin/main
 | order by blocks desc, events desc
 """.strip(),
             "agent_risk_heatmap": """
 AiAgentAudit_CL
+<<<<<<< HEAD
+| summarize avg_risk=avg(risk_score_d), max_risk=max(risk_score_d),
+    events=count()
+    by agent_type_s, action_type_s
+=======
 | summarize avg_risk=avg(risk_score_d), max_risk=max(risk_score_d), events=count() by agent_type_s, action_type_s
+>>>>>>> origin/main
 | order by avg_risk desc
 """.strip(),
             "dlp_interceptions": """
 AiAgentAudit_CL
 | where action_type_s == \"dlp_scan\"
+<<<<<<< HEAD
+| where policy_decision_s == \"deny\"
+    or outcome_s == \"blocked\"
+    or dlp_patterns_s != \"\"
+| project TimeGenerated, run_id_s, agent_type_s, dlp_patterns_s,
+    classification_label_s, risk_score_d, error_code_s, correlation_id_s
+=======
 | where policy_decision_s == \"deny\" or outcome_s == \"blocked\" or dlp_patterns_s != \"\"
 | project TimeGenerated, run_id_s, agent_type_s, dlp_patterns_s, classification_label_s, risk_score_d, error_code_s, correlation_id_s
+>>>>>>> origin/main
 | order by TimeGenerated desc
 """.strip(),
             "content_safety_blocks": """
 AiAgentAudit_CL
 | where action_type_s == \"content_safety_check\"
 | where policy_decision_s == \"deny\" or outcome_s == \"blocked\"
+<<<<<<< HEAD
+| project TimeGenerated, run_id_s, agent_type_s,
+    content_safety_category_s, risk_score_d, error_code_s, correlation_id_s
+=======
 | project TimeGenerated, run_id_s, agent_type_s, content_safety_category_s, risk_score_d, error_code_s, correlation_id_s
+>>>>>>> origin/main
 | order by TimeGenerated desc
 """.strip(),
             "kill_switch_activity": """
 AiAgentAudit_CL
 | where action_type_s == \"kill_switch_check\"
+<<<<<<< HEAD
+| summarize checks=count(), blocked=countif(outcome_s == \"blocked\")
+    by run_id_s, agent_type_s
+=======
 | summarize checks=count(), blocked=countif(outcome_s == \"blocked\") by run_id_s, agent_type_s
+>>>>>>> origin/main
 | order by blocked desc, checks desc
 """.strip(),
             "token_budget": """
 AiAgentAudit_CL
 | where action_type_s == \"openai_call\"
+<<<<<<< HEAD
+| summarize total_tokens=sum(token_count_d),
+    avg_tokens=avg(token_count_d), calls=count()
+    by run_id_s, agent_type_s
+=======
 | summarize total_tokens=sum(token_count_d), avg_tokens=avg(token_count_d), calls=count() by run_id_s, agent_type_s
+>>>>>>> origin/main
 | order by total_tokens desc
 """.strip(),
             "anomaly_candidates": """
 let per_run = AiAgentAudit_CL
+<<<<<<< HEAD
+| summarize total_events=count(), total_tokens=sum(token_count_d),
+    max_risk=max(risk_score_d)
+    by run_id_s, agent_type_s;
+let baselines = per_run
+| summarize avg_events=avg(total_events), avg_tokens=avg(total_tokens);
+per_run
+| join kind=inner baselines on 1==1
+| where total_events > (avg_events * 3.0)
+    or total_tokens > (avg_tokens * 3.0)
+    or max_risk >= 0.8
+| project run_id_s, agent_type_s, total_events, total_tokens,
+    max_risk, avg_events, avg_tokens
+=======
 | summarize total_events=count(), total_tokens=sum(token_count_d), max_risk=max(risk_score_d) by run_id_s, agent_type_s;
 let baselines = per_run | summarize avg_events=avg(total_events), avg_tokens=avg(total_tokens);
 per_run
 | join kind=inner baselines on 1==1
 | where total_events > (avg_events * 3.0) or total_tokens > (avg_tokens * 3.0) or max_risk >= 0.8
 | project run_id_s, agent_type_s, total_events, total_tokens, max_risk, avg_events, avg_tokens
+>>>>>>> origin/main
 | order by max_risk desc, total_events desc
         """.strip(),
                 "auth_failure_timeline": """
         AiAgentAudit_CL
+<<<<<<< HEAD
+        | where action_type_s in (
+            "signature_verification_failure", "policy_check")
+        | where outcome_s == "blocked"
+        | summarize failures=count()
+            by error_code_s, correlation_id_s, bin(TimeGenerated, 1m)
+=======
         | where action_type_s in ("signature_verification_failure", "policy_check")
         | where outcome_s == "blocked"
         | summarize failures=count() by error_code_s, correlation_id_s, bin(TimeGenerated, 1m)
+>>>>>>> origin/main
         | order by TimeGenerated desc
         """.strip(),
                 "admin_action_timeline": """
         AiAgentAudit_CL
+<<<<<<< HEAD
+        | where action_type_s in (
+            "admin_kill_switch_toggle",
+            "admin_run_delete",
+            "admin_dsar_export")
+        | project TimeGenerated, action_type_s, error_code_s,
+            path_s, correlation_id_s
+=======
             | where action_type_s in ("admin_kill_switch_toggle", "admin_run_delete", "admin_dsar_export")
         | project TimeGenerated, action_type_s, error_code_s, path_s, correlation_id_s
+>>>>>>> origin/main
         | order by TimeGenerated desc
         """.strip(),
                 "cross_tenant_probing": """
         AiAgentAudit_CL
         | where action_type_s == "cross_tenant_access_attempt"
+<<<<<<< HEAD
+        | summarize attempts=count(), paths=make_set(path_s)
+            by correlation_id_s, bin(TimeGenerated, 5m)
+=======
         | summarize attempts=count(), paths=make_set(path_s) by correlation_id_s, bin(TimeGenerated, 5m)
+>>>>>>> origin/main
         | where attempts >= 3
         | order by attempts desc, TimeGenerated desc
         """.strip(),
                 "rate_limit_spikes": """
         AiAgentAudit_CL
         | where action_type_s == "rate_limit_exceeded"
+<<<<<<< HEAD
+        | summarize blocked=count()
+            by error_code_s, path_s, bin(TimeGenerated, 5m)
+=======
         | summarize blocked=count() by error_code_s, path_s, bin(TimeGenerated, 5m)
+>>>>>>> origin/main
         | where blocked >= 5
         | order by blocked desc, TimeGenerated desc
         """.strip(),
                 "compliance_processing_basis": """
             AiAgentAudit_CL
+<<<<<<< HEAD
+            | summarize events=count()
+                by data_processing_basis_s, consent_status_s
+=======
             | summarize events=count() by data_processing_basis_s, consent_status_s
+>>>>>>> origin/main
             | order by events desc
         """.strip(),
                 "compliance_classification_posture": """
             AiAgentAudit_CL
+<<<<<<< HEAD
+            | summarize events=count(),
+                blocked=countif(outcome_s == "blocked")
+                by classification_label_s, action_type_s
+=======
             | summarize events=count(), blocked=countif(outcome_s == "blocked") by classification_label_s, action_type_s
+>>>>>>> origin/main
             | order by blocked desc, events desc
         """.strip(),
                 "compliance_dsar_exports": """

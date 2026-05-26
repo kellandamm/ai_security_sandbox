@@ -10,6 +10,20 @@ import {
   Globe,
   FileText,
   Zap,
+<<<<<<< HEAD
+  Shield,
+  ShieldCheck,
+  Network,
+  RefreshCw,
+  Activity,
+  DollarSign,
+  Plug,
+  Database,
+  ScanLine,
+  GitBranch,
+  ClipboardCheck,
+=======
+>>>>>>> origin/main
 } from "lucide-react";
 import { AuditEvent, ActionType, PolicyDecision, Outcome, RunStatus } from "../types";
 import clsx from "clsx";
@@ -47,6 +61,39 @@ const ACTION_ICONS: Record<ActionType, React.ElementType> = {
   run_start: Clock,
   run_complete: CheckCircle,
   run_abort: XCircle,
+<<<<<<< HEAD
+  prompt_shield_scan: ShieldCheck,
+  retrieved_content_scan: ScanLine,
+  agent_spawn: GitBranch,
+  agent_delegation: GitBranch,
+  governance_attestation: ClipboardCheck,
+  anomaly_ml_score: Activity,
+  dsar_purge: Database,
+  admin_dsar_export: Database,
+  mcp_tool_call: Plug,
+  mcp_tool_discovery: Plug,
+  excessive_agency_block: AlertTriangle,
+  loop_detected: RefreshCw,
+  cost_threshold_breach: DollarSign,
+  rate_limit_exceeded: Network,
+};
+
+const PHASE_BADGE: Partial<Record<ActionType, { label: string; cls: string }>> = {
+  prompt_shield_scan: { label: "Phase 1", cls: "bg-purple-500/10 border-purple-500/30 text-purple-300" },
+  retrieved_content_scan: { label: "Phase 1", cls: "bg-purple-500/10 border-purple-500/30 text-purple-300" },
+  agent_spawn: { label: "Phase 2", cls: "bg-indigo-500/10 border-indigo-500/30 text-indigo-300" },
+  agent_delegation: { label: "Phase 2", cls: "bg-indigo-500/10 border-indigo-500/30 text-indigo-300" },
+  governance_attestation: { label: "Phase 3", cls: "bg-sky-500/10 border-sky-500/30 text-sky-300" },
+  anomaly_ml_score: { label: "Phase 4", cls: "bg-yellow-500/10 border-yellow-500/30 text-yellow-300" },
+  dsar_purge: { label: "DSAR", cls: "bg-rose-500/10 border-rose-500/30 text-rose-300" },
+  admin_dsar_export: { label: "DSAR", cls: "bg-rose-500/10 border-rose-500/30 text-rose-300" },
+  mcp_tool_call: { label: "MCP", cls: "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" },
+  mcp_tool_discovery: { label: "MCP", cls: "bg-emerald-500/10 border-emerald-500/30 text-emerald-300" },
+  excessive_agency_block: { label: "Phase 7", cls: "bg-orange-500/10 border-orange-500/30 text-orange-300" },
+  loop_detected: { label: "Phase 7", cls: "bg-orange-500/10 border-orange-500/30 text-orange-300" },
+  cost_threshold_breach: { label: "Phase 7", cls: "bg-orange-500/10 border-orange-500/30 text-orange-300" },
+=======
+>>>>>>> origin/main
 };
 
 const DECISION_COLORS: Record<PolicyDecision, string> = {
@@ -110,6 +157,21 @@ function EventRow({ event, index }: { event: AuditEvent; index: number }) {
             {event.action_type.replace(/_/g, " ")}
           </span>
 
+<<<<<<< HEAD
+          {/* Phase / surface badge (MCP, DSAR, Phase 1-7) */}
+          {PHASE_BADGE[event.action_type] && (
+            <span
+              className={clsx(
+                "text-[10px] px-1.5 py-0.5 rounded border font-mono uppercase tracking-wide",
+                PHASE_BADGE[event.action_type]!.cls
+              )}
+            >
+              {PHASE_BADGE[event.action_type]!.label}
+            </span>
+          )}
+
+=======
+>>>>>>> origin/main
           {/* Policy decision badge */}
           <span
             className={clsx(

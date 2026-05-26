@@ -19,7 +19,25 @@ export type ActionType =
   | "approval_response"
   | "run_start"
   | "run_complete"
+<<<<<<< HEAD
+  | "run_abort"
+  | "prompt_shield_scan"
+  | "retrieved_content_scan"
+  | "agent_spawn"
+  | "agent_delegation"
+  | "governance_attestation"
+  | "anomaly_ml_score"
+  | "dsar_purge"
+  | "admin_dsar_export"
+  | "mcp_tool_call"
+  | "mcp_tool_discovery"
+  | "excessive_agency_block"
+  | "loop_detected"
+  | "cost_threshold_breach"
+  | "rate_limit_exceeded";
+=======
   | "run_abort";
+>>>>>>> origin/main
 
 export type PolicyDecision = "allow" | "deny" | "requires_approval";
 export type Outcome = "success" | "failure" | "blocked" | "timeout";
@@ -102,7 +120,15 @@ export type AttackCategory =
   | "credential-harvest"
   | "token-bomb"
   | "ssrf"
+<<<<<<< HEAD
+  | "policy-bypass"
+  | "loop"
+  | "anomaly"
+  | "egress"
+  | "high-risk-action";
+=======
   | "policy-bypass";
+>>>>>>> origin/main
 
 export interface AttackTemplate {
   id: string;

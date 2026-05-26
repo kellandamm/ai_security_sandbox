@@ -25,6 +25,24 @@ class AgentCapabilities:
     description: str = ""
     # High-risk actions for this type that require human approval
     high_risk_actions: list[str] = field(default_factory=list)
+<<<<<<< HEAD
+    # ── Foundry Shield uplift (phases 2, 6, 7) ────────────────────────────────
+    # Phase 3 — reference to the model card JSON in app/governance/model_cards/
+    model_card_version: str = "1.0.0"
+    # Phase 6 — external MCP server URIs this agent may consume tools from
+    mcp_endpoints: list[str] = field(default_factory=list)
+    # Phase 7 — estimated-cost ceiling (USD) per run
+    cost_budget_usd: float = 1.0
+    # Phase 7 — sliding-window cap on repeated identical tool calls
+    max_loop_depth: int = 5
+    # Phase 2 — may this agent spawn child agents?
+    delegation_allowed: bool = False
+    # Phase 2 — subset of allowed_tools the agent may delegate to a child
+    delegation_scopes: list[str] = field(default_factory=list)
+    # Phase 2 — child agent types this agent may spawn (empty = none)
+    allowed_child_agent_types: list[str] = field(default_factory=list)
+=======
+>>>>>>> origin/main
 
 
 # ── Capability registry ────────────────────────────────────────────────────────
@@ -39,6 +57,16 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         max_tokens_per_run=50_000,
         max_run_duration_seconds=180,
         high_risk_actions=[],
+<<<<<<< HEAD
+        model_card_version="1.0.0",
+        mcp_endpoints=[],
+        cost_budget_usd=0.50,
+        max_loop_depth=5,
+        delegation_allowed=False,
+        delegation_scopes=[],
+        allowed_child_agent_types=[],
+=======
+>>>>>>> origin/main
     ),
     "web-researcher": AgentCapabilities(
         description="Fetches content from approved external APIs, summarises findings.",
@@ -47,6 +75,16 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         max_tokens_per_run=100_000,
         max_run_duration_seconds=300,
         high_risk_actions=["http_post"],  # HTTP POST requires human approval
+<<<<<<< HEAD
+        model_card_version="1.0.0",
+        mcp_endpoints=[],
+        cost_budget_usd=1.50,
+        max_loop_depth=5,
+        delegation_allowed=True,
+        delegation_scopes=["file_read", "openai_call"],
+        allowed_child_agent_types=["data-analyst"],
+=======
+>>>>>>> origin/main
     ),
 }
 

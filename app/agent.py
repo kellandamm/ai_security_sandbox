@@ -27,6 +27,29 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+<<<<<<< HEAD
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AzureOpenAI
+
+from anomaly import RunStats, get_default_scorer
+from audit import AuditLogger
+from capability_manifest import get_capabilities, is_egress_allowed, is_tool_allowed
+from errors import (
+    AnomalyHaltError,
+    CostBudgetExceededError,
+    LoopDetectedError,
+    PromptInjectionError,
+)
+from kill_switch import KillSwitchClient, KillSwitchError
+from loop_detection import LoopDetector
+from models.audit_event import ActionType, Outcome, PolicyDecision
+from models.requests import AgentRunRequest
+from policy import ApprovalRequiredError, OPAClient, PolicyDenyError
+from prompt_shield import PromptShieldClient
+from rate_limiter import CostBudget, TokenBudget
+from sandbox import EphemeralWorkspace
+from tool_schema import ToolArgumentError, validate_tool_arguments
+=======
 from audit import AuditLogger
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from capability_manifest import get_capabilities, is_egress_allowed, is_tool_allowed
@@ -37,6 +60,7 @@ from openai import AzureOpenAI
 from policy import ApprovalRequiredError, OPAClient, PolicyDenyError
 from rate_limiter import TokenBudget
 from sandbox import EphemeralWorkspace
+>>>>>>> origin/main
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +68,35 @@ AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 APPROVAL_LOGIC_APP_URL = os.environ.get("APPROVAL_LOGIC_APP_URL", "")
 
+<<<<<<< HEAD
+# Phase 1 — shared Prompt Shields client for retrieved-content rescans.
+# A no-op when CONTENT_SAFETY_ENDPOINT is unset (offline / unit tests).
+_prompt_shield: PromptShieldClient = PromptShieldClient()
+# Minimum tool-result size to bother sending to Prompt Shields.
+_RESCAN_MIN_CHARS = int(os.environ.get("PROMPT_SHIELD_RESCAN_MIN_CHARS", "256"))
+# Maximum tool-result size we forward to the scanner per call.
+_RESCAN_MAX_CHARS = int(os.environ.get("PROMPT_SHIELD_RESCAN_MAX_CHARS", "16000"))
+_INJECTION_STUB = (
+    "[REDACTED: tool result removed because Prompt Shields detected an "
+    "indirect prompt-injection attempt in the retrieved content.]"
+)
+
+=======
+>>>>>>> origin/main
 # Approval callback: run_id -> pending approval state.
 _pending_approvals: dict[str, dict[str, Any]] = {}
 
 
 def _classify_text_label(text: str) -> str:
     lowered = text.lower()
+<<<<<<< HEAD
+    if any(
+        token in lowered
+        for token in ["ssn", "accountkey=", "secret", "token", "password"]
+    ):
+=======
     if any(token in lowered for token in ["ssn", "accountkey=", "secret", "token", "password"]):
+>>>>>>> origin/main
         return "restricted"
     if any(token in lowered for token in ["confidential", "private", "internal only"]):
         return "confidential"
@@ -173,6 +219,16 @@ async def run_agent(
 
     caps = get_capabilities(agent_type)
     token_budget = TokenBudget(max_tokens=caps.max_tokens_per_run)
+<<<<<<< HEAD
+    # Phase 7 — per-run cost ceiling + loop detector.
+    cost_budget = CostBudget(max_usd=caps.cost_budget_usd)
+    loop_detector = LoopDetector(max_depth=caps.max_loop_depth)
+
+    # Phase 4 — per-run anomaly accumulator + scorer (process-wide baseline).
+    run_stats = RunStats()
+    anomaly_scorer = get_default_scorer()
+=======
+>>>>>>> origin/main
 
     # Azure OpenAI client — Managed Identity auth (no API key)
     credential = DefaultAzureCredential()
@@ -245,12 +301,40 @@ async def run_agent(
         usage = response.usage
         if usage:
             token_budget.consume(usage.total_tokens)
+<<<<<<< HEAD
+            # Phase 7 — track cumulative USD spend; fail closed on overrun.
+            try:
+                total_usd = cost_budget.consume(
+                    model_name=OPENAI_MODEL,
+                    prompt_tokens=usage.prompt_tokens or 0,
+                    completion_tokens=usage.completion_tokens or 0,
+                )
+            except CostBudgetExceededError as exc:
+                auditor.log(
+                    ActionType.COST_THRESHOLD_BREACH,
+                    policy_decision=PolicyDecision.DENY,
+                    outcome=Outcome.BLOCKED,
+                    token_count=usage.total_tokens,
+                    estimated_cost_usd=exc.estimated_cost_usd,
+                    error_code="COST_BUDGET_EXCEEDED",
+                    risk_score=0.85,
+                )
+                raise
+=======
+>>>>>>> origin/main
             auditor.log(
                 ActionType.OPENAI_CALL,
                 policy_decision=PolicyDecision.ALLOW,
                 token_count=usage.total_tokens,
+<<<<<<< HEAD
+                estimated_cost_usd=total_usd,
                 outcome=Outcome.SUCCESS,
             )
+            run_stats.observe_event(tokens=usage.total_tokens)
+=======
+                outcome=Outcome.SUCCESS,
+            )
+>>>>>>> origin/main
 
         choice = response.choices[0]
 
@@ -275,6 +359,90 @@ async def run_agent(
             tool_name = tool_call.function.name
             tool_args = json.loads(tool_call.function.arguments or "{}")
 
+<<<<<<< HEAD
+            # Phase 7 — validate arguments against the declared JSON schema
+            # before any execution. Catches hallucinated paths, oversized
+            # strings, and type confusion.
+            schema = _tool_parameters_schema(tool_name)
+            if schema is not None:
+                try:
+                    validate_tool_arguments(tool_args, schema)
+                except ToolArgumentError as exc:
+                    auditor.log(
+                        ActionType.POLICY_CHECK,
+                        policy_decision=PolicyDecision.DENY,
+                        outcome=Outcome.BLOCKED,
+                        error_code=f"tool_arg_schema:{tool_name}:{exc}",
+                        risk_score=0.4,
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(
+                                {"error": f"Invalid arguments: {exc}"}
+                            ),
+                        }
+                    )
+                    continue
+
+            # Phase 7 — loop detection: same (tool, args) ≥ max_loop_depth in window.
+            try:
+                loop_detector.observe(tool_name, tool_args)
+            except LoopDetectedError as exc:
+                auditor.log(
+                    ActionType.LOOP_DETECTED,
+                    policy_decision=PolicyDecision.DENY,
+                    outcome=Outcome.BLOCKED,
+                    error_code=f"LOOP_DETECTED:{tool_name}",
+                    risk_score=0.8,
+                )
+                raise exc
+
+            denied = False
+            try:
+                tool_result = await _execute_tool(
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    run_id=run_id,
+                    agent_type=agent_type,
+                    workspace=workspace,
+                    opa=opa,
+                    kill_switch=kill_switch,
+                    auditor=auditor,
+                    caps=caps,
+                    correlation_id=request.correlation_id,
+                )
+            except (PolicyDenyError, ApprovalRequiredError):
+                denied = True
+                raise
+            finally:
+                # Always observe the tool call — denied calls are signal too
+                # (and weight heavily in the denial-rate feature).
+                run_stats.observe_event(tool_name=tool_name, denied=denied)
+                # Live anomaly scoring. Halt path raises a domain error
+                # that the orchestrator surfaces as a policy-style stop.
+                decision = anomaly_scorer.score_run(agent_type, run_stats)
+                auditor.log(
+                    ActionType.ANOMALY_ML_SCORE,
+                    policy_decision=(
+                        PolicyDecision.DENY if decision.halted else PolicyDecision.ALLOW
+                    ),
+                    outcome=Outcome.BLOCKED if decision.halted else Outcome.SUCCESS,
+                    anomaly_score=decision.score,
+                    risk_score=decision.score,
+                    error_code=(
+                        f"ANOMALY_HALT:{tool_name}" if decision.halted
+                        else f"anomaly_observed:{tool_name}"
+                    ),
+                )
+                if decision.halted:
+                    raise AnomalyHaltError(
+                        f"Run halted by anomaly scorer (score={decision.score:.3f}, "
+                        f"halt_threshold={anomaly_scorer._halt:.2f})",
+                        anomaly_score=decision.score,
+                    )
+=======
             tool_result = await _execute_tool(
                 tool_name=tool_name,
                 tool_args=tool_args,
@@ -287,6 +455,7 @@ async def run_agent(
                 caps=caps,
                 correlation_id=request.correlation_id,
             )
+>>>>>>> origin/main
 
             messages.append(
                 {
@@ -296,9 +465,72 @@ async def run_agent(
                 }
             )
 
+<<<<<<< HEAD
+    # Phase 4 — commit completed-run feature vector to the baseline.
+    try:
+        anomaly_scorer.commit_run(agent_type, run_stats)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Failed to commit anomaly baseline: %s", exc)
+
     return result
 
 
+async def _rescan_retrieved_content(
+    *,
+    text: str,
+    source: str,
+    run_id: str,
+    agent_type: str,
+    auditor: AuditLogger,
+) -> str:
+    """Phase 1 — indirect prompt-injection rescan on tool-returned content.
+
+    Returns either the original text (clean) or a small ``[REDACTED]`` stub
+    that replaces the tool result before it is appended to the model's
+    message history. Fail-closed: a :class:`PromptInjectionError` from the
+    shield (e.g. transport failure in ``block`` mode) collapses to the stub
+    and logs a ``RETRIEVED_CONTENT_SCAN`` audit event with deny outcome.
+    """
+    if not text or len(text) < _RESCAN_MIN_CHARS:
+        return text
+    payload = text[:_RESCAN_MAX_CHARS]
+    try:
+        decision = await _prompt_shield.scan_document(payload, source=source)
+    except PromptInjectionError as exc:
+        auditor.log(
+            ActionType.RETRIEVED_CONTENT_SCAN,
+            policy_decision=PolicyDecision.DENY,
+            outcome=Outcome.BLOCKED,
+            injection_score=exc.score,
+            content_safety_category=",".join(exc.categories) or "prompt_injection",
+            risk_score=exc.score,
+            tool_namespace=f"local://{agent_type}/{source}",
+            error_code=f"retrieved_content_blocked:{source}",
+        )
+        return _INJECTION_STUB
+
+    auditor.log(
+        ActionType.RETRIEVED_CONTENT_SCAN,
+        policy_decision=(
+            PolicyDecision.DENY if decision.attack_detected else PolicyDecision.ALLOW
+        ),
+        outcome=Outcome.BLOCKED if decision.attack_detected else Outcome.SUCCESS,
+        injection_score=decision.score,
+        content_safety_category=",".join(decision.categories) or None,
+        risk_score=decision.score,
+        tool_namespace=f"local://{agent_type}/{source}",
+        error_code=f"retrieved_content_scan:{source}",
+    )
+    if decision.attack_detected:
+        return _INJECTION_STUB
+    return text
+
+
+=======
+    return result
+
+
+>>>>>>> origin/main
 async def _execute_tool(
     tool_name: str,
     tool_args: dict,
@@ -373,7 +605,19 @@ async def _execute_tool(
 
         elif tool_name == "file_read":
             content = workspace.read_file(tool_args["path"])
+<<<<<<< HEAD
+            decoded = content.decode(errors="replace")
+            decoded = await _rescan_retrieved_content(
+                text=decoded,
+                source="file_read",
+                run_id=run_id,
+                agent_type=agent_type,
+                auditor=auditor,
+            )
+            return {"content": decoded}
+=======
             return {"content": content.decode(errors="replace")}
+>>>>>>> origin/main
 
         elif tool_name == "http_get":
             url = tool_args.get("url", "")
@@ -382,7 +626,12 @@ async def _execute_tool(
                 return {"error": f"FQDN not in egress allowlist: {parsed.netloc}"}
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url)
+<<<<<<< HEAD
+            body = resp.text[:4096]
+            classification_label = _classify_text_label(body)
+=======
             classification_label = _classify_text_label(resp.text[:4096])
+>>>>>>> origin/main
             auditor.log(
                 ActionType.NETWORK_CALL,
                 policy_decision=PolicyDecision.ALLOW,
@@ -390,7 +639,18 @@ async def _execute_tool(
                 classification_label=classification_label,
                 outcome=Outcome.SUCCESS,
             )
+<<<<<<< HEAD
+            body = await _rescan_retrieved_content(
+                text=body,
+                source="http_get",
+                run_id=run_id,
+                agent_type=agent_type,
+                auditor=auditor,
+            )
+            return {"status_code": resp.status_code, "body": body}
+=======
             return {"status_code": resp.status_code, "body": resp.text[:4096]}
+>>>>>>> origin/main
 
         else:
             return {"error": f"Unimplemented tool: {tool_name}"}
@@ -475,3 +735,19 @@ def _build_tool_definitions(allowed_tools: list[str]) -> list[dict]:
         },
     }
     return [v for k, v in definitions.items() if k in allowed_tools]
+<<<<<<< HEAD
+
+
+# Phase 7 — lookup of the inner JSON schema for argument validation.
+def _tool_parameters_schema(tool_name: str) -> dict | None:
+    """Return the JSON-schema ``parameters`` block for *tool_name*, or
+    ``None`` if the tool is not defined (e.g. an MCP-namespaced tool which
+    carries its own schema)."""
+    for entry in _build_tool_definitions([tool_name]):
+        function = entry.get("function") or {}
+        params = function.get("parameters")
+        if isinstance(params, dict):
+            return params
+    return None
+=======
+>>>>>>> origin/main

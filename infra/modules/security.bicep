@@ -146,3 +146,77 @@ output orchestratorClientId string = orchestratorIdentity.properties.clientId
 output agentRunnerIdentityId string = agentRunnerIdentity.id
 output agentRunnerPrincipalId string = agentRunnerIdentity.properties.principalId
 output agentRunnerClientId string = agentRunnerIdentity.properties.clientId
+<<<<<<< HEAD
+output contentSafetyEndpoint string = contentSafety.properties.endpoint
+output contentSafetyName string = contentSafety.name
+output contentSafetyId string = contentSafety.id
+
+// ─── Azure AI Content Safety (Prompt Shields) — Phase 1 ──────────────────────
+// Used by app/prompt_shield.py to detect direct + indirect prompt-injection
+// attempts. Orchestrator identity authenticates via Managed Identity (RBAC).
+
+resource contentSafety 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: 'cs-${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'ContentSafety'
+  sku: {
+    name: 'S0'
+  }
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    customSubDomainName: 'cs-${resourceToken}'
+    publicNetworkAccess: 'Disabled'
+    networkAcls: {
+      defaultAction: 'Deny'
+      ipRules: []
+      virtualNetworkRules: []
+    }
+    disableLocalAuth: true  // force Entra ID auth; no API keys
+  }
+}
+
+// Cognitive Services User — read-only inference access, no resource management.
+var cognitiveServicesUserRoleId = 'a97b65f3-24c7-4388-baec-2e87135dc908'
+
+resource orchestratorContentSafetyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(contentSafety.id, orchestratorIdentity.id, cognitiveServicesUserRoleId)
+  scope: contentSafety
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesUserRoleId)
+    principalId: orchestratorIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource agentRunnerContentSafetyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(contentSafety.id, agentRunnerIdentity.id, cognitiveServicesUserRoleId)
+  scope: contentSafety
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesUserRoleId)
+    principalId: agentRunnerIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource contentSafetyPrivateEndpoint 'Microsoft.Network/privateEndpoints@2023-06-01' = {
+  name: 'pe-cs-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: { id: privateEndpointSubnetId }
+    privateLinkServiceConnections: [
+      {
+        name: 'cs-connection'
+        properties: {
+          privateLinkServiceId: contentSafety.id
+          groupIds: ['account']
+        }
+      }
+    ]
+  }
+}
+=======
+>>>>>>> origin/main

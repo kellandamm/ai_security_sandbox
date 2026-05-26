@@ -42,6 +42,35 @@ def _auth_header(subject: str, tenant_id: str, roles: list[str] | None = None) -
     return headers
 
 
+<<<<<<< HEAD
+def _approver_header(
+    subject: str, tenant_id: str, roles: list[str] | None = None
+) -> dict[str, str]:
+    """Build the Phase 5 dual-control approver headers (second admin)."""
+    roles_raw = ",".join(roles) if roles else ""
+    scopes_raw = ""
+    timestamp = str(int(time.time()))
+    signature = main._compute_identity_signature(
+        subject=subject,
+        tenant_id=tenant_id,
+        roles=roles_raw,
+        scopes=scopes_raw,
+        timestamp=timestamp,
+        secret=main.APIM_IDENTITY_SIGNING_SECRET,
+    )
+    headers = {
+        "X-Approver-Subject": subject,
+        "X-Approver-Tenant-Id": tenant_id,
+        "X-Approver-Timestamp": timestamp,
+        "X-Approver-Signature": signature,
+    }
+    if roles:
+        headers["X-Approver-Roles"] = roles_raw
+    return headers
+
+
+=======
+>>>>>>> origin/main
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(main, "ENABLE_APP_AUTHZ", True)
@@ -234,17 +263,39 @@ def test_dsar_export_returns_matching_subject_runs(client: TestClient, telemetry
     _seed_run(run_id="run-dsar-b")
     main._runs["run-dsar-b"]["owner_subject"] = "user-b"
 
+<<<<<<< HEAD
+    headers = _auth_header("admin-user", "tenant-a", roles=["Sandbox.Admin"])
+    headers.update(
+        _approver_header("approver-user", "tenant-a", roles=["Sandbox.Admin"])
+    )
+    response = client.get(
+        "/compliance/dsar/subject/user-a?tenant_id=tenant-a",
+        headers=headers,
+=======
     response = client.get(
         "/compliance/dsar/subject/user-a?tenant_id=tenant-a",
         headers=_auth_header("admin-user", "tenant-a", roles=["Sandbox.Admin"]),
+>>>>>>> origin/main
     )
 
     assert response.status_code == 200
     payload = response.json()
+<<<<<<< HEAD
+    # Phase 5 — DSAR response now keys on subject_hash, not raw subject.
+    assert payload["subject_hash"] == main.dsar.subject_hash(
+        "user-a", "tenant-a"
+    )
+    assert payload["tenant_id"] == "tenant-a"
+    assert payload["manifest"]["total_matched_in_page"] == 1
+    assert payload["manifest"]["runs"][0]["run_id"] == "run-dsar-a"
+    assert payload["manifest_sha256"]
+    assert payload["approved_by"]["subject"] == "approver-user"
+=======
     assert payload["subject"] == "user-a"
     assert payload["tenant_id"] == "tenant-a"
     assert payload["run_count"] == 1
     assert payload["runs"][0]["run_id"] == "run-dsar-a"
+>>>>>>> origin/main
     assert telemetry_events
     assert telemetry_events[-1]["action_type"] == main.ActionType.ADMIN_DSAR_EXPORT
     assert str(telemetry_events[-1]["error_code"]).startswith("ADMIN_ACTION_DSAR_EXPORT:")

@@ -23,6 +23,27 @@ hooks:
         ./scripts/import-opa-image.ps1
 
         $resourceGroup = azd env get-value AZURE_RESOURCE_GROUP
+<<<<<<< HEAD
+        $acrLoginServer = "$(azd env get-value AZURE_CONTAINER_REGISTRY_NAME).azurecr.io"
+        $opaWebAppName = azd env get-value OPA_WEBAPP_NAME
+        $opaImage = azd env get-value AGENT_JOB_OPA_IMAGE
+        $orchestratorWebAppName = azd env get-value ORCHESTRATOR_WEBAPP_NAME
+        $serviceOrchestratorImage = azd env get-value SERVICE_ORCHESTRATOR_IMAGE_NAME
+
+        if ($opaWebAppName -and $opaImage) {
+          az webapp config container set --resource-group $resourceGroup --name $opaWebAppName --container-image-name $opaImage --container-registry-url "https://$acrLoginServer"
+          az webapp config appsettings set --resource-group $resourceGroup --name $opaWebAppName --settings WEBSITES_PORT=8181 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+          az webapp restart --resource-group $resourceGroup --name $opaWebAppName
+        }
+
+        # Restore orchestrator webapp image from last successful deploy so a fresh provision
+        # doesn't leave it on the placeholder image (APIM routes to this webapp).
+        if ($orchestratorWebAppName -and $serviceOrchestratorImage) {
+          az webapp config container set --resource-group $resourceGroup --name $orchestratorWebAppName --container-image-name $serviceOrchestratorImage --container-registry-url "https://$acrLoginServer"
+          az webapp config appsettings set --resource-group $resourceGroup --name $orchestratorWebAppName --settings WEBSITES_PORT=8000 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+          az webapp restart --resource-group $resourceGroup --name $orchestratorWebAppName
+        }
+=======
         $opaWebAppName = azd env get-value OPA_WEBAPP_NAME
         $opaImage = azd env get-value AGENT_JOB_OPA_IMAGE
 
@@ -31,6 +52,7 @@ hooks:
           az webapp config appsettings set --resource-group $resourceGroup --name $opaWebAppName --settings WEBSITES_PORT=8181 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
           az webapp restart --resource-group $resourceGroup --name $opaWebAppName
         }
+>>>>>>> origin/main
       interactive: false
       continueOnError: false
     posix:
@@ -74,17 +96,47 @@ hooks:
         patch_opa_sidecar "containerapp job" "$AGENT_JOB_NAME" "jobs"
 
         OPA_WEBAPP_NAME="$(azd env get-value OPA_WEBAPP_NAME)"
+<<<<<<< HEAD
+        ORCHESTRATOR_WEBAPP_NAME="$(azd env get-value ORCHESTRATOR_WEBAPP_NAME)"
+        SERVICE_ORCHESTRATOR_IMAGE_NAME="$(azd env get-value SERVICE_ORCHESTRATOR_IMAGE_NAME 2>/dev/null || echo '')"
+        ACR_LOGIN_SERVER="${AZURE_CONTAINER_REGISTRY_NAME}.azurecr.io"
+        if [ -n "$OPA_WEBAPP_NAME" ]; then
+          az webapp config container set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$OPA_WEBAPP_NAME" \
+            --container-image-name "$OPA_IMAGE" \
+            --container-registry-url "https://$ACR_LOGIN_SERVER"
+=======
         if [ -n "$OPA_WEBAPP_NAME" ]; then
           az webapp config set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$OPA_WEBAPP_NAME" \
             --linux-fx-version "DOCKER|$OPA_IMAGE"
+>>>>>>> origin/main
           az webapp config appsettings set \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$OPA_WEBAPP_NAME" \
             --settings WEBSITES_PORT=8181 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
           az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$OPA_WEBAPP_NAME"
         fi
+<<<<<<< HEAD
+
+        # Restore orchestrator webapp image from last successful deploy so re-provision
+        # doesn't strand it on the placeholder image (APIM routes here).
+        if [ -n "$ORCHESTRATOR_WEBAPP_NAME" ] && [ -n "$SERVICE_ORCHESTRATOR_IMAGE_NAME" ]; then
+          az webapp config container set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$ORCHESTRATOR_WEBAPP_NAME" \
+            --container-image-name "$SERVICE_ORCHESTRATOR_IMAGE_NAME" \
+            --container-registry-url "https://$ACR_LOGIN_SERVER"
+          az webapp config appsettings set \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$ORCHESTRATOR_WEBAPP_NAME" \
+            --settings WEBSITES_PORT=8000 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+          az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$ORCHESTRATOR_WEBAPP_NAME"
+        fi
+=======
+>>>>>>> origin/main
       interactive: false
       continueOnError: false
   postdeploy:
@@ -101,11 +153,29 @@ hooks:
         $frontendWebAppName = azd env get-value FRONTEND_WEBAPP_NAME
         $frontendUrl = azd env get-value FRONTEND_URL
 
+<<<<<<< HEAD
+        if (-not $aadClientId) {
+          Write-Error "AAD_CLIENT_ID is empty. Run scripts/register-app.ps1 and 'azd env set AAD_CLIENT_ID <id>' before deploying."
+          exit 1
+        }
+
+        # Force UTF-8 so 'az acr build' stream output doesn't crash on Windows cp1252
+        # consoles (UnicodeEncodeError on \u2713 from colorama). --no-logs is the
+        # belt-and-braces fallback: it skips the log stream entirely.
+        $env:PYTHONIOENCODING = 'utf-8'
+
+        Push-Location frontend
+        az acr build --registry $acrName --image ai-sandbox/frontend:latest --file Dockerfile --build-arg VITE_API_BASE="$apimGatewayUrl/sandbox" --build-arg VITE_AAD_CLIENT_ID="$aadClientId" --build-arg VITE_AAD_TENANT_ID="$tenantId" --no-logs .
+        Pop-Location
+
+        az webapp config container set --resource-group $resourceGroup --name $orchestratorWebAppName --container-image-name $serviceOrchestratorImage --container-registry-url "https://$acrName.azurecr.io"
+=======
         Push-Location frontend
         az acr build --registry $acrName --image ai-sandbox/frontend:latest --file Dockerfile --build-arg VITE_API_BASE="$apimGatewayUrl/sandbox" --build-arg VITE_AAD_CLIENT_ID="$aadClientId" --build-arg VITE_AAD_TENANT_ID="$tenantId" .
         Pop-Location
 
         az webapp config set --resource-group $resourceGroup --name $orchestratorWebAppName --linux-fx-version "DOCKER|$serviceOrchestratorImage"
+>>>>>>> origin/main
         az webapp restart --resource-group $resourceGroup --name $orchestratorWebAppName
 
         az webapp restart --resource-group $resourceGroup --name $frontendWebAppName
@@ -129,6 +199,14 @@ hooks:
         FRONTEND_WEBAPP_NAME="$(azd env get-value FRONTEND_WEBAPP_NAME)"
         FRONTEND_URL="$(azd env get-value FRONTEND_URL)"
 
+<<<<<<< HEAD
+        if [ -z "$AAD_CLIENT_ID" ]; then
+          echo "AAD_CLIENT_ID is empty. Run scripts/register-app.sh and 'azd env set AAD_CLIENT_ID <id>' before deploying." >&2
+          exit 1
+        fi
+
+=======
+>>>>>>> origin/main
         cd frontend
         az acr build \
           --registry "$AZURE_CONTAINER_REGISTRY_NAME" \
@@ -137,12 +215,23 @@ hooks:
           --build-arg VITE_API_BASE="$APIM_GATEWAY_URL/sandbox" \
           --build-arg VITE_AAD_CLIENT_ID="$AAD_CLIENT_ID" \
           --build-arg VITE_AAD_TENANT_ID="$AZURE_TENANT_ID" \
+<<<<<<< HEAD
+          --no-logs \
+          .
+        cd ..
+        az webapp config container set \
+          --resource-group "$AZURE_RESOURCE_GROUP" \
+          --name "$ORCHESTRATOR_WEBAPP_NAME" \
+          --container-image-name "$SERVICE_ORCHESTRATOR_IMAGE_NAME" \
+          --container-registry-url "https://${AZURE_CONTAINER_REGISTRY_NAME}.azurecr.io"
+=======
           .
         cd ..
         az webapp config set \
           --resource-group "$AZURE_RESOURCE_GROUP" \
           --name "$ORCHESTRATOR_WEBAPP_NAME" \
           --linux-fx-version "DOCKER|$SERVICE_ORCHESTRATOR_IMAGE_NAME"
+>>>>>>> origin/main
         az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$ORCHESTRATOR_WEBAPP_NAME"
         az webapp restart --resource-group "$AZURE_RESOURCE_GROUP" --name "$FRONTEND_WEBAPP_NAME"
         ./scripts/configure-frontend-auth.sh "$FRONTEND_URL" "$FRONTEND_WEBAPP_NAME" "$AZURE_RESOURCE_GROUP" "$AAD_CLIENT_ID"

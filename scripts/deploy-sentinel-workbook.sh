@@ -6,11 +6,25 @@ WORKSPACE_RESOURCE_ID="${2:-${LOG_ANALYTICS_WORKSPACE_ID:-}}"
 WORKBOOK_DISPLAY_NAME="${WORKBOOK_DISPLAY_NAME:-AI Security Sandbox - SOC Workbook}"
 WORKBOOK_ID="${WORKBOOK_ID:-}"
 
+<<<<<<< HEAD
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKBOOK_DEFINITION_PATH="${WORKBOOK_DEFINITION_PATH:-$SCRIPT_DIR/../infra/workbooks/soc-workbook.json}"
+
+=======
+>>>>>>> origin/main
 if [ -z "$RESOURCE_GROUP" ]; then
   echo "Resource group is required. Pass as arg1 or set AZURE_RESOURCE_GROUP." >&2
   exit 1
 fi
 
+<<<<<<< HEAD
+if [ ! -f "$WORKBOOK_DEFINITION_PATH" ]; then
+  echo "Workbook definition file not found: $WORKBOOK_DEFINITION_PATH" >&2
+  exit 1
+fi
+
+=======
+>>>>>>> origin/main
 SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 
 if [ -z "$WORKSPACE_RESOURCE_ID" ]; then
@@ -59,6 +73,10 @@ PAYLOAD_FILE="$(mktemp)"
 export WORKSPACE_RESOURCE_ID
 export LOCATION
 export WORKBOOK_DISPLAY_NAME
+<<<<<<< HEAD
+export WORKBOOK_DEFINITION_PATH
+=======
+>>>>>>> origin/main
 python3 - <<'PY' > "$PAYLOAD_FILE"
 import json
 import os
@@ -66,6 +84,16 @@ import os
 workspace = os.environ["WORKSPACE_RESOURCE_ID"]
 location = os.environ["LOCATION"]
 display_name = os.environ["WORKBOOK_DISPLAY_NAME"]
+<<<<<<< HEAD
+definition_path = os.environ["WORKBOOK_DEFINITION_PATH"]
+
+with open(definition_path, "r", encoding="utf-8") as f:
+    raw = f.read()
+
+# Substitute the workspace placeholder, then validate the result is JSON.
+raw = raw.replace("__WORKSPACE_RESOURCE_ID__", workspace)
+serialized = json.loads(raw)
+=======
 
 serialized = {
     "version": "Notebook/1.0",
@@ -157,6 +185,7 @@ serialized = {
         },
     ],
 }
+>>>>>>> origin/main
 
 payload = {
     "kind": "shared",

@@ -21,10 +21,18 @@ import posixpath
 import re
 from typing import Optional
 
+<<<<<<< HEAD
+from azure.core.exceptions import AzureError
+from azure.identity import DefaultAzureCredential
+from azure.storage.blob import BlobServiceClient, ContentSettings
+
+from audit import AuditLogger
+=======
 from audit import AuditLogger
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
+>>>>>>> origin/main
 from models.audit_event import ActionType, Outcome, PolicyDecision
 
 logger = logging.getLogger(__name__)
@@ -58,7 +66,16 @@ _SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("restricted", re.compile(r"\b(?:\d[ -]*?){13,19}\b")),
     ("restricted", re.compile(r"(?i)AccountKey\s*=\s*[A-Za-z0-9+/]{32,}={0,2}")),
     ("confidential", re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)),
+<<<<<<< HEAD
+    (
+        "confidential",
+        re.compile(
+            r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{3}\)?[ .-]?)\d{3}[ .-]?\d{4}\b"
+        ),
+    ),
+=======
     ("confidential", re.compile(r"\b(?:\+?\d{1,3}[ .-]?)?(?:\(?\d{3}\)?[ .-]?)\d{3}[ .-]?\d{4}\b")),
+>>>>>>> origin/main
 ]
 
 
@@ -269,7 +286,14 @@ class EphemeralWorkspace:
         for label, pattern in _SENSITIVE_PATTERNS:
             if pattern.search(text):
                 return label
+<<<<<<< HEAD
+        if any(
+            token in lowered
+            for token in ["confidential", "private", "internal only"]
+        ):
+=======
         if any(token in lowered for token in ["confidential", "private", "internal only"]):
+>>>>>>> origin/main
             return "confidential"
         if any(token in lowered for token in ["public", "published", "marketing"]):
             return "public"

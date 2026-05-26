@@ -56,3 +56,26 @@ class ApprovalCallbackRequest(BaseModel):
 
 class KillRunRequest(BaseModel):
     reason: str = Field(..., min_length=1, max_length=512)
+<<<<<<< HEAD
+
+
+class SpawnRunRequest(BaseModel):
+    """Body for ``POST /runs/{parent_run_id}/spawn`` — agent-to-agent delegation."""
+
+    child_agent_type: AgentType
+    allowed_tools: list[str] = Field(default_factory=list, max_length=64)
+    task: str = Field(..., min_length=1, max_length=4096)
+    input_data: Optional[dict[str, Any]] = None
+
+
+class SpawnRunResponse(BaseModel):
+    run_id: str
+    parent_run_id: str
+    status: RunStatus
+    call_depth: int
+    call_chain: list[str]
+    correlation_id: str
+    delegation_nonce: str
+    delegation_expires_at: int
+=======
+>>>>>>> origin/main

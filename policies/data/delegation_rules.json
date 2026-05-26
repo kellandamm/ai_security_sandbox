@@ -1,0 +1,11 @@
+{
+  "max_call_depth": 3,
+  "allowed_child_agent_types": {
+    "data-analyst": [],
+    "web-researcher": ["data-analyst"]
+  },
+  "allowed_delegation_scopes": {
+    "data-analyst": [],
+    "web-researcher": ["file_read", "openai_call"]
+  }
+}

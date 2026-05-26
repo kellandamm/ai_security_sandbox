@@ -138,6 +138,25 @@ All rules from the article are implemented in `app/sandbox.py`:
 - Checked on every API request (middleware) and every tool call (agent loop)
 - 10-second TTL cache — near-realtime response to flag changes
 
+<<<<<<< HEAD
+### 9. Foundry Shield uplift (Phases 1–7)
+
+Recent additions extend the sandbox to cover the rest of the OWASP LLM / agentic-AI risk surface. All controls emit dedicated `AuditEvent` action types and surface in the SOC workbook.
+
+| Phase | Control | Code | OWASP / framework |
+|---|---|---|---|
+| 1 | Layered prompt-injection defense (deterministic + heuristic + retrieved-content scan) | `app/prompt_shield.py`, `policies/prompt_injection.rego` | LLM01 |
+| 2 | Signed agent-to-agent delegation envelope + call-chain provenance | `app/delegation.py`, `policies/delegation.rego` | LLM07, agentic trust |
+| 3 | ISO 42001 / NIST AI RMF governance metadata on every run | `app/governance/`, model cards | ISO 42001, NIST AI RMF |
+| 4 | Statistical anomaly scoring on per-run / per-tool features | `app/anomaly.py` | LLM04, LLM10 |
+| 5 | DSAR purge endpoint + admin export trail | `app/dsar.py` | GDPR / CCPA |
+| 6 | MCP server + client with namespaced tool authorization | `app/mcp_server.py`, `app/mcp_client.py` | Model Context Protocol |
+| 7 | Excessive-agency block, loop detector, cost-threshold breach | `policies/excessive_agency.rego`, `app/loop_detection.py`, `app/pricing.py` | LLM08, LLM10 |
+
+The SOC workbook definition lives at `infra/workbooks/soc-workbook.json` (deployed by `scripts/deploy-sentinel-workbook.{ps1,sh}`) and includes filterable panels for every one of the above controls plus the original policy / DLP / content-safety views.
+
+=======
+>>>>>>> origin/main
 ---
 
 ## Containment Layer Mapping

@@ -115,3 +115,66 @@ class TokenBudget:
     @property
     def remaining(self) -> int:
         return self._max - self._used
+<<<<<<< HEAD
+
+
+class CostBudget:
+    """
+    Per-run USD cost budget for Azure OpenAI calls (Phase 7).
+
+    The budget is denominated in U.S. dollars and updated after each
+    OpenAI completion using ``pricing.estimate_cost``. Fails closed:
+    once the cumulative estimate equals or exceeds the configured ceiling
+    the next ``consume`` call raises :class:`CostBudgetExceededError`,
+    and the orchestrator surfaces that as a halt + audit event.
+    """
+
+    def __init__(self, max_usd: float):
+        if max_usd <= 0:
+            raise ValueError("max_usd must be > 0")
+        self._max = float(max_usd)
+        self._used = 0.0
+        self._lock = threading.Lock()
+
+    def consume(
+        self,
+        *,
+        model_name: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> float:
+        """Add this call's estimate to the running total and return it.
+
+        Raises :class:`CostBudgetExceededError` if the new total breaches
+        the configured ceiling.
+        """
+        from errors import CostBudgetExceededError
+        from pricing import estimate_cost
+
+        delta = estimate_cost(
+            model_name=model_name,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        with self._lock:
+            new_total = self._used + delta
+            if new_total > self._max:
+                raise CostBudgetExceededError(
+                    "Cost budget exhausted: "
+                    f"used=${self._used:.4f}, delta=${delta:.4f}, "
+                    f"max=${self._max:.4f}",
+                    estimated_cost_usd=new_total,
+                    budget_usd=self._max,
+                )
+            self._used = new_total
+            return new_total
+
+    @property
+    def used_usd(self) -> float:
+        return self._used
+
+    @property
+    def budget_usd(self) -> float:
+        return self._max
+=======
+>>>>>>> origin/main

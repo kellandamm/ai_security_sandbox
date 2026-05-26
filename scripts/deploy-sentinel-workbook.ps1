@@ -8,12 +8,29 @@ param(
 
     [string]$WorkbookId,
 
+<<<<<<< HEAD
+    [string]$Location,
+
+    [string]$WorkbookDefinitionPath
+=======
     [string]$Location
+>>>>>>> origin/main
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+<<<<<<< HEAD
+if (-not $WorkbookDefinitionPath) {
+    $WorkbookDefinitionPath = Join-Path $PSScriptRoot "..\infra\workbooks\soc-workbook.json"
+}
+
+if (-not (Test-Path $WorkbookDefinitionPath)) {
+    throw "Workbook definition file not found: $WorkbookDefinitionPath"
+}
+
+=======
+>>>>>>> origin/main
 $null = az account show 2>$null
 if ($LASTEXITCODE -ne 0) {
     throw "Azure CLI is not authenticated. Run 'az login' first."
@@ -50,6 +67,15 @@ if (-not $WorkbookId) {
     }
 }
 
+<<<<<<< HEAD
+# Read the shared definition and substitute the workspace placeholder.
+# The definition keeps `__WORKSPACE_RESOURCE_ID__` everywhere a crossComponentResources / fallback id is needed.
+$definitionText = Get-Content -Path $WorkbookDefinitionPath -Raw
+$definitionText = $definitionText.Replace('__WORKSPACE_RESOURCE_ID__', $WorkspaceResourceId)
+
+# Validate it round-trips as JSON before we send it.
+$null = $definitionText | ConvertFrom-Json
+=======
 $serialized = @{
     version = "Notebook/1.0"
     items = @(
@@ -140,6 +166,7 @@ $serialized = @{
         }
     )
 }
+>>>>>>> origin/main
 
 $payload = @{
     kind = "shared"
@@ -148,7 +175,11 @@ $payload = @{
         displayName = $WorkbookDisplayName
         sourceId = $WorkspaceResourceId
         category = "sentinel"
+<<<<<<< HEAD
+        serializedData = $definitionText
+=======
         serializedData = ($serialized | ConvertTo-Json -Depth 20 -Compress)
+>>>>>>> origin/main
         version = "1.0"
     }
 }

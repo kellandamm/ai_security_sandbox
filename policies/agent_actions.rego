@@ -101,6 +101,31 @@ egress_destination_is_allowed {
     input.action_type == "openai_call"
 }
 
+<<<<<<< HEAD
+# ── MCP tool calls (Phase 6) ──────────────────────────────────────────────────
+# When the orchestrator invokes a tool exposed by an EXTERNAL MCP server,
+# the action_type is the literal string "mcp_tool_call" and the calling
+# agent must have the target server in its `mcp_allowed_servers` allowlist.
+# The server identity is passed via `input.tool_namespace` (the server
+# `name` field, NOT the full URI — keeps the policy data file small).
+tool_is_allowed_for_agent_type {
+    input.action_type == "mcp_tool_call"
+    some server in data.data.mcp_allowed_servers[input.agent_type]
+    server == input.tool_namespace
+}
+
+# Egress is implicit for mcp_tool_call (the destination FQDN is enforced
+# in-process by the MCP client against the same allowlist).
+egress_destination_is_allowed {
+    input.action_type == "mcp_tool_call"
+}
+
+path_is_in_allowed_prefix {
+    input.action_type == "mcp_tool_call"
+}
+
+=======
+>>>>>>> origin/main
 # ── Reason string ─────────────────────────────────────────────────────────────
 
 reason = "kill_switch_active" {

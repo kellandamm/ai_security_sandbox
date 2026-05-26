@@ -21,6 +21,11 @@ import requests
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient, BlobServiceClient
+<<<<<<< HEAD
+
+from governance import derive_consent_status, governance_reference
+=======
+>>>>>>> origin/main
 from models.audit_event import ActionType, AuditEvent, Outcome, PolicyDecision
 
 logger = logging.getLogger(__name__)
@@ -136,9 +141,33 @@ class AuditLogger:
         content_safety_category: Optional[str] = None,
         grounding_score: Optional[float] = None,
         data_processing_basis: str = "security_monitoring",
+<<<<<<< HEAD
+        consent_status: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        # ── Foundry Shield uplift (phases 1-7) ────────────────────────────────
+        parent_agent_id: Optional[str] = None,
+        call_chain: Optional[list[str]] = None,
+        governance_metadata_ref: Optional[str] = None,
+        injection_score: Optional[float] = None,
+        tool_namespace: Optional[str] = None,
+        confirmation_token: Optional[str] = None,
+        estimated_cost_usd: Optional[float] = None,
+        anomaly_score: Optional[float] = None,
+    ) -> AuditEvent:
+        # ── Phase 3: auto-attach ISO 42001 / NIST AI RMF governance metadata.
+        # Explicit overrides win; otherwise look up the agent's model card.
+        if governance_metadata_ref is None:
+            governance_metadata_ref = governance_reference(self.agent_type)
+        # ── Phase 3: derive consent_status from classification when caller
+        # did not assert it explicitly. Preserves backwards-compatibility
+        # because the previous default was "not_required".
+        if consent_status is None:
+            consent_status = derive_consent_status(classification_label)
+=======
         consent_status: str = "not_required",
         parent_run_id: Optional[str] = None,
     ) -> AuditEvent:
+>>>>>>> origin/main
         event = AuditEvent(
             run_id=self.run_id,
             agent_type=self.agent_type,
@@ -159,6 +188,17 @@ class AuditLogger:
             consent_status=consent_status,
             parent_run_id=parent_run_id,
             correlation_id=self.correlation_id,
+<<<<<<< HEAD
+            parent_agent_id=parent_agent_id,
+            call_chain=call_chain or [],
+            governance_metadata_ref=governance_metadata_ref,
+            injection_score=injection_score,
+            tool_namespace=tool_namespace,
+            confirmation_token=confirmation_token,
+            estimated_cost_usd=estimated_cost_usd,
+            anomaly_score=anomaly_score,
+=======
+>>>>>>> origin/main
         )
 
         redacted_payload = redact_audit_event_dict(event.model_dump(mode="json"))

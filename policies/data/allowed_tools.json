@@ -18,5 +18,12 @@
     "openai-calls-enabled": true,
     "agent-data-analyst-enabled": true,
     "agent-web-researcher-enabled": true
+<<<<<<< HEAD
+  },
+  "mcp_allowed_servers": {
+    "data-analyst": [],
+    "web-researcher": []
+=======
+>>>>>>> origin/main
   }
 }

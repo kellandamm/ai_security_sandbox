@@ -230,6 +230,31 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       <value></value>
     </set-header>
 
+<<<<<<< HEAD
+    <!-- Phase 5: scrub all dual-control approver headers so callers cannot
+         forge them. They are minted server-side from a second bearer JWT
+         passed in the `X-Approver-Authorization` header. -->
+    <set-header name="X-Approver-Subject" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Approver-Tenant-Id" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Approver-Roles" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Approver-Scopes" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Approver-Timestamp" exists-action="override">
+      <value></value>
+    </set-header>
+    <set-header name="X-Approver-Signature" exists-action="override">
+      <value></value>
+    </set-header>
+
+=======
+>>>>>>> origin/main
     <!-- CORS for the static frontend and local Vite dev server -->
     <cors allow-credentials="false">
       <allowed-origins>
@@ -291,6 +316,52 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       </when>
     </choose>
 
+<<<<<<< HEAD
+    <!-- Phase 5: dual-control approver envelope. When a second bearer
+         token is supplied in `X-Approver-Authorization`, validate it
+         against the same AAD tenant + audience and mint an HMAC-signed
+         approver envelope that the orchestrator's `_require_dual_admin`
+         expects. Self-approval rejection happens server-side. -->
+    <choose>
+      <when condition="@(&quot;{{aadClientId}}&quot; != &quot;NOT_CONFIGURED&quot; &amp;&amp; context.Request.Headers.ContainsKey(&quot;X-Approver-Authorization&quot;))">
+        <validate-jwt header-name="X-Approver-Authorization" failed-validation-httpcode="401" failed-validation-error-message="Unauthorized: valid approver bearer token required" output-token-variable-name="validatedApproverJwt">
+          <openid-config url="https://login.microsoftonline.com/{{aadTenantId}}/v2.0/.well-known/openid-configuration" />
+          <required-claims>
+            <claim name="aud" match="any">
+              <value>api://{{aadClientId}}</value>
+              <value>{{aadClientId}}</value>
+            </claim>
+          </required-claims>
+        </validate-jwt>
+        <set-variable name="approverSubject" value="@(context.Variables.GetValueOrDefault&lt;Jwt&gt;(&quot;validatedApproverJwt&quot;)?.Subject ?? &quot;&quot;)" />
+        <set-variable name="approverTenantId" value="{{aadTenantId}}" />
+        <set-variable name="approverRoles" value="" />
+        <set-variable name="approverScopes" value="" />
+        <set-variable name="approverTimestamp" value="@(DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString())" />
+        <set-variable name="approverSignature" value="@(BitConverter.ToString((new System.Security.Cryptography.HMACSHA256(System.Text.Encoding.UTF8.GetBytes(&quot;{{apimIdentitySigningSecret}}&quot;))).ComputeHash(System.Text.Encoding.UTF8.GetBytes(string.Join(&quot;|&quot;, new[] { (string)context.Variables[&quot;approverSubject&quot;], (string)context.Variables[&quot;approverTenantId&quot;], (string)context.Variables[&quot;approverRoles&quot;], (string)context.Variables[&quot;approverScopes&quot;], (string)context.Variables[&quot;approverTimestamp&quot;] })))).Replace(&quot;-&quot;, &quot;&quot;).ToLowerInvariant())" />
+        <set-header name="X-Approver-Subject" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverSubject&quot;])</value>
+        </set-header>
+        <set-header name="X-Approver-Tenant-Id" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverTenantId&quot;])</value>
+        </set-header>
+        <set-header name="X-Approver-Roles" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverRoles&quot;])</value>
+        </set-header>
+        <set-header name="X-Approver-Scopes" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverScopes&quot;])</value>
+        </set-header>
+        <set-header name="X-Approver-Timestamp" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverTimestamp&quot;])</value>
+        </set-header>
+        <set-header name="X-Approver-Signature" exists-action="override">
+          <value>@((string)context.Variables[&quot;approverSignature&quot;])</value>
+        </set-header>
+      </when>
+    </choose>
+
+=======
+>>>>>>> origin/main
     <set-variable name="subscriptionCounterKey" value="@(context.Subscription != null ? context.Subscription.Id : &quot;anonymous&quot;)" />
     <set-variable name="rateLimitKey" value="@(context.Request.Headers.ContainsKey(&quot;X-Agent-ID&quot;) ? context.Request.Headers.GetValueOrDefault(&quot;X-Agent-ID&quot;, &quot;&quot;) : (string)context.Variables[&quot;subscriptionCounterKey&quot;])" />
 

@@ -221,3 +221,10 @@ output AAD_CLIENT_ID string = aadClientId
 output KEY_VAULT_NAME string = security.outputs.keyVaultName
 output LOG_ANALYTICS_WORKSPACE_ID string = monitoring.outputs.logAnalyticsWorkspaceId
 output APP_CONFIG_ENDPOINT string = killSwitch.outputs.appConfigEndpoint
+<<<<<<< HEAD
+// Phase 1 — Azure AI Content Safety (Prompt Shields) endpoint, surfaced for
+// orchestrator + agent-runner via App Configuration key `CONTENT_SAFETY_ENDPOINT`.
+output CONTENT_SAFETY_ENDPOINT string = security.outputs.contentSafetyEndpoint
+output CONTENT_SAFETY_NAME string = security.outputs.contentSafetyName
+=======
+>>>>>>> origin/main
