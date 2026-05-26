@@ -230,6 +230,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       <value></value>
     </set-header>
 
+<<<<<<< HEAD
     <!-- Phase 5: scrub all dual-control approver headers so callers cannot
          forge them. They are minted server-side from a second bearer JWT
          passed in the `X-Approver-Authorization` header. -->
@@ -252,6 +253,8 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       <value></value>
     </set-header>
 
+=======
+>>>>>>> origin/main
     <!-- CORS for the static frontend and local Vite dev server -->
     <cors allow-credentials="false">
       <allowed-origins>
@@ -313,6 +316,7 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       </when>
     </choose>
 
+<<<<<<< HEAD
     <!-- Phase 5: dual-control approver envelope. When a second bearer
          token is supplied in `X-Approver-Authorization`, validate it
          against the same AAD tenant + audience and mint an HMAC-signed
@@ -356,6 +360,8 @@ resource apiPolicy 'Microsoft.ApiManagement/service/apis/policies@2023-05-01-pre
       </when>
     </choose>
 
+=======
+>>>>>>> origin/main
     <set-variable name="subscriptionCounterKey" value="@(context.Subscription != null ? context.Subscription.Id : &quot;anonymous&quot;)" />
     <set-variable name="rateLimitKey" value="@(context.Request.Headers.ContainsKey(&quot;X-Agent-ID&quot;) ? context.Request.Headers.GetValueOrDefault(&quot;X-Agent-ID&quot;, &quot;&quot;) : (string)context.Variables[&quot;subscriptionCounterKey&quot;])" />
 

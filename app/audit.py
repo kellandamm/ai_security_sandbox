@@ -21,8 +21,11 @@ import requests
 from azure.core.exceptions import AzureError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobClient, BlobServiceClient
+<<<<<<< HEAD
 
 from governance import derive_consent_status, governance_reference
+=======
+>>>>>>> origin/main
 from models.audit_event import ActionType, AuditEvent, Outcome, PolicyDecision
 
 logger = logging.getLogger(__name__)
@@ -138,6 +141,7 @@ class AuditLogger:
         content_safety_category: Optional[str] = None,
         grounding_score: Optional[float] = None,
         data_processing_basis: str = "security_monitoring",
+<<<<<<< HEAD
         consent_status: Optional[str] = None,
         parent_run_id: Optional[str] = None,
         # ── Foundry Shield uplift (phases 1-7) ────────────────────────────────
@@ -159,6 +163,11 @@ class AuditLogger:
         # because the previous default was "not_required".
         if consent_status is None:
             consent_status = derive_consent_status(classification_label)
+=======
+        consent_status: str = "not_required",
+        parent_run_id: Optional[str] = None,
+    ) -> AuditEvent:
+>>>>>>> origin/main
         event = AuditEvent(
             run_id=self.run_id,
             agent_type=self.agent_type,
@@ -179,6 +188,7 @@ class AuditLogger:
             consent_status=consent_status,
             parent_run_id=parent_run_id,
             correlation_id=self.correlation_id,
+<<<<<<< HEAD
             parent_agent_id=parent_agent_id,
             call_chain=call_chain or [],
             governance_metadata_ref=governance_metadata_ref,
@@ -187,6 +197,8 @@ class AuditLogger:
             confirmation_token=confirmation_token,
             estimated_cost_usd=estimated_cost_usd,
             anomaly_score=anomaly_score,
+=======
+>>>>>>> origin/main
         )
 
         redacted_payload = redact_audit_event_dict(event.model_dump(mode="json"))

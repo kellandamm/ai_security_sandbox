@@ -25,6 +25,7 @@ class AgentCapabilities:
     description: str = ""
     # High-risk actions for this type that require human approval
     high_risk_actions: list[str] = field(default_factory=list)
+<<<<<<< HEAD
     # ── Foundry Shield uplift (phases 2, 6, 7) ────────────────────────────────
     # Phase 3 — reference to the model card JSON in app/governance/model_cards/
     model_card_version: str = "1.0.0"
@@ -40,6 +41,8 @@ class AgentCapabilities:
     delegation_scopes: list[str] = field(default_factory=list)
     # Phase 2 — child agent types this agent may spawn (empty = none)
     allowed_child_agent_types: list[str] = field(default_factory=list)
+=======
+>>>>>>> origin/main
 
 
 # ── Capability registry ────────────────────────────────────────────────────────
@@ -54,6 +57,7 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         max_tokens_per_run=50_000,
         max_run_duration_seconds=180,
         high_risk_actions=[],
+<<<<<<< HEAD
         model_card_version="1.0.0",
         mcp_endpoints=[],
         cost_budget_usd=0.50,
@@ -61,6 +65,8 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         delegation_allowed=False,
         delegation_scopes=[],
         allowed_child_agent_types=[],
+=======
+>>>>>>> origin/main
     ),
     "web-researcher": AgentCapabilities(
         description="Fetches content from approved external APIs, summarises findings.",
@@ -69,6 +75,7 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         max_tokens_per_run=100_000,
         max_run_duration_seconds=300,
         high_risk_actions=["http_post"],  # HTTP POST requires human approval
+<<<<<<< HEAD
         model_card_version="1.0.0",
         mcp_endpoints=[],
         cost_budget_usd=1.50,
@@ -76,6 +83,8 @@ AGENT_CAPABILITIES: dict[str, AgentCapabilities] = {
         delegation_allowed=True,
         delegation_scopes=["file_read", "openai_call"],
         allowed_child_agent_types=["data-analyst"],
+=======
+>>>>>>> origin/main
     ),
 }
 

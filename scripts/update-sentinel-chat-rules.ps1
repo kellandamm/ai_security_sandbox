@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 param(
     [Parameter(Mandatory = $true)]
     [string]$ResourceGroup,
@@ -12,6 +13,13 @@ if (-not $WorkspaceName) {
     $WorkspaceName = az monitor log-analytics workspace list -g $ResourceGroup --query "[0].name" -o tsv
 }
 $baseUrl = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.OperationalInsights/workspaces/$WorkspaceName/providers/Microsoft.SecurityInsights/alertRules"
+=======
+$ErrorActionPreference = "Stop"
+
+$subscriptionId = az account show --query id -o tsv
+$workspaceName = az monitor log-analytics workspace list -g rg-dev --query "[0].name" -o tsv
+$baseUrl = "https://management.azure.com/subscriptions/$subscriptionId/resourceGroups/rg-dev/providers/Microsoft.OperationalInsights/workspaces/$workspaceName/providers/Microsoft.SecurityInsights/alertRules"
+>>>>>>> origin/main
 $apiVersion = "2023-02-01-preview"
 
 $rules = @(

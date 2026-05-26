@@ -138,6 +138,7 @@ All rules from the article are implemented in `app/sandbox.py`:
 - Checked on every API request (middleware) and every tool call (agent loop)
 - 10-second TTL cache — near-realtime response to flag changes
 
+<<<<<<< HEAD
 ### 9. Foundry Shield uplift (Phases 1–7)
 
 Recent additions extend the sandbox to cover the rest of the OWASP LLM / agentic-AI risk surface. All controls emit dedicated `AuditEvent` action types and surface in the SOC workbook.
@@ -154,6 +155,8 @@ Recent additions extend the sandbox to cover the rest of the OWASP LLM / agentic
 
 The SOC workbook definition lives at `infra/workbooks/soc-workbook.json` (deployed by `scripts/deploy-sentinel-workbook.{ps1,sh}`) and includes filterable panels for every one of the above controls plus the original policy / DLP / content-safety views.
 
+=======
+>>>>>>> origin/main
 ---
 
 ## Containment Layer Mapping

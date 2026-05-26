@@ -29,4 +29,8 @@ class GatewayHeaderMiddleware(BaseHTTPMiddleware):
                 content={"detail": "Requests must enter through API Management."},
             )
 
+<<<<<<< HEAD
         return await call_next(request)
+=======
+        return await call_next(request)
+>>>>>>> origin/main

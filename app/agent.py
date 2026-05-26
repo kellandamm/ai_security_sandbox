@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+<<<<<<< HEAD
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 
@@ -48,6 +49,18 @@ from prompt_shield import PromptShieldClient
 from rate_limiter import CostBudget, TokenBudget
 from sandbox import EphemeralWorkspace
 from tool_schema import ToolArgumentError, validate_tool_arguments
+=======
+from audit import AuditLogger
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from capability_manifest import get_capabilities, is_egress_allowed, is_tool_allowed
+from kill_switch import KillSwitchClient, KillSwitchError
+from models.audit_event import ActionType, Outcome, PolicyDecision
+from models.requests import AgentRunRequest
+from openai import AzureOpenAI
+from policy import ApprovalRequiredError, OPAClient, PolicyDenyError
+from rate_limiter import TokenBudget
+from sandbox import EphemeralWorkspace
+>>>>>>> origin/main
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +68,7 @@ AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 APPROVAL_LOGIC_APP_URL = os.environ.get("APPROVAL_LOGIC_APP_URL", "")
 
+<<<<<<< HEAD
 # Phase 1 — shared Prompt Shields client for retrieved-content rescans.
 # A no-op when CONTENT_SAFETY_ENDPOINT is unset (offline / unit tests).
 _prompt_shield: PromptShieldClient = PromptShieldClient()
@@ -67,16 +81,22 @@ _INJECTION_STUB = (
     "indirect prompt-injection attempt in the retrieved content.]"
 )
 
+=======
+>>>>>>> origin/main
 # Approval callback: run_id -> pending approval state.
 _pending_approvals: dict[str, dict[str, Any]] = {}
 
 
 def _classify_text_label(text: str) -> str:
     lowered = text.lower()
+<<<<<<< HEAD
     if any(
         token in lowered
         for token in ["ssn", "accountkey=", "secret", "token", "password"]
     ):
+=======
+    if any(token in lowered for token in ["ssn", "accountkey=", "secret", "token", "password"]):
+>>>>>>> origin/main
         return "restricted"
     if any(token in lowered for token in ["confidential", "private", "internal only"]):
         return "confidential"
@@ -199,6 +219,7 @@ async def run_agent(
 
     caps = get_capabilities(agent_type)
     token_budget = TokenBudget(max_tokens=caps.max_tokens_per_run)
+<<<<<<< HEAD
     # Phase 7 — per-run cost ceiling + loop detector.
     cost_budget = CostBudget(max_usd=caps.cost_budget_usd)
     loop_detector = LoopDetector(max_depth=caps.max_loop_depth)
@@ -206,6 +227,8 @@ async def run_agent(
     # Phase 4 — per-run anomaly accumulator + scorer (process-wide baseline).
     run_stats = RunStats()
     anomaly_scorer = get_default_scorer()
+=======
+>>>>>>> origin/main
 
     # Azure OpenAI client — Managed Identity auth (no API key)
     credential = DefaultAzureCredential()
@@ -278,6 +301,7 @@ async def run_agent(
         usage = response.usage
         if usage:
             token_budget.consume(usage.total_tokens)
+<<<<<<< HEAD
             # Phase 7 — track cumulative USD spend; fail closed on overrun.
             try:
                 total_usd = cost_budget.consume(
@@ -296,14 +320,21 @@ async def run_agent(
                     risk_score=0.85,
                 )
                 raise
+=======
+>>>>>>> origin/main
             auditor.log(
                 ActionType.OPENAI_CALL,
                 policy_decision=PolicyDecision.ALLOW,
                 token_count=usage.total_tokens,
+<<<<<<< HEAD
                 estimated_cost_usd=total_usd,
                 outcome=Outcome.SUCCESS,
             )
             run_stats.observe_event(tokens=usage.total_tokens)
+=======
+                outcome=Outcome.SUCCESS,
+            )
+>>>>>>> origin/main
 
         choice = response.choices[0]
 
@@ -328,6 +359,7 @@ async def run_agent(
             tool_name = tool_call.function.name
             tool_args = json.loads(tool_call.function.arguments or "{}")
 
+<<<<<<< HEAD
             # Phase 7 — validate arguments against the declared JSON schema
             # before any execution. Catches hallucinated paths, oversized
             # strings, and type confusion.
@@ -410,6 +442,20 @@ async def run_agent(
                         f"halt_threshold={anomaly_scorer._halt:.2f})",
                         anomaly_score=decision.score,
                     )
+=======
+            tool_result = await _execute_tool(
+                tool_name=tool_name,
+                tool_args=tool_args,
+                run_id=run_id,
+                agent_type=agent_type,
+                workspace=workspace,
+                opa=opa,
+                kill_switch=kill_switch,
+                auditor=auditor,
+                caps=caps,
+                correlation_id=request.correlation_id,
+            )
+>>>>>>> origin/main
 
             messages.append(
                 {
@@ -419,6 +465,7 @@ async def run_agent(
                 }
             )
 
+<<<<<<< HEAD
     # Phase 4 — commit completed-run feature vector to the baseline.
     try:
         anomaly_scorer.commit_run(agent_type, run_stats)
@@ -479,6 +526,11 @@ async def _rescan_retrieved_content(
     return text
 
 
+=======
+    return result
+
+
+>>>>>>> origin/main
 async def _execute_tool(
     tool_name: str,
     tool_args: dict,
@@ -553,6 +605,7 @@ async def _execute_tool(
 
         elif tool_name == "file_read":
             content = workspace.read_file(tool_args["path"])
+<<<<<<< HEAD
             decoded = content.decode(errors="replace")
             decoded = await _rescan_retrieved_content(
                 text=decoded,
@@ -562,6 +615,9 @@ async def _execute_tool(
                 auditor=auditor,
             )
             return {"content": decoded}
+=======
+            return {"content": content.decode(errors="replace")}
+>>>>>>> origin/main
 
         elif tool_name == "http_get":
             url = tool_args.get("url", "")
@@ -570,8 +626,12 @@ async def _execute_tool(
                 return {"error": f"FQDN not in egress allowlist: {parsed.netloc}"}
             async with httpx.AsyncClient(timeout=10) as client:
                 resp = await client.get(url)
+<<<<<<< HEAD
             body = resp.text[:4096]
             classification_label = _classify_text_label(body)
+=======
+            classification_label = _classify_text_label(resp.text[:4096])
+>>>>>>> origin/main
             auditor.log(
                 ActionType.NETWORK_CALL,
                 policy_decision=PolicyDecision.ALLOW,
@@ -579,6 +639,7 @@ async def _execute_tool(
                 classification_label=classification_label,
                 outcome=Outcome.SUCCESS,
             )
+<<<<<<< HEAD
             body = await _rescan_retrieved_content(
                 text=body,
                 source="http_get",
@@ -587,6 +648,9 @@ async def _execute_tool(
                 auditor=auditor,
             )
             return {"status_code": resp.status_code, "body": body}
+=======
+            return {"status_code": resp.status_code, "body": resp.text[:4096]}
+>>>>>>> origin/main
 
         else:
             return {"error": f"Unimplemented tool: {tool_name}"}
@@ -671,6 +735,7 @@ def _build_tool_definitions(allowed_tools: list[str]) -> list[dict]:
         },
     }
     return [v for k, v in definitions.items() if k in allowed_tools]
+<<<<<<< HEAD
 
 
 # Phase 7 — lookup of the inner JSON schema for argument validation.
@@ -684,3 +749,5 @@ def _tool_parameters_schema(tool_name: str) -> dict | None:
         if isinstance(params, dict):
             return params
     return None
+=======
+>>>>>>> origin/main

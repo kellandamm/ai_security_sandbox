@@ -8,8 +8,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$ApiId,
 
+<<<<<<< HEAD
     [Parameter(Mandatory = $true)]
     [string]$BackendHost,
+=======
+    [string]$BackendHost = 'ca-orchestrator-odjretldtozf4.thankfulfield-47d3231f.westus2.azurecontainerapps.io',
+>>>>>>> origin/main
 
     [string]$SubscriptionId = (az account show --query id -o tsv)
 )

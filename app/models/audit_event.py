@@ -35,6 +35,7 @@ class ActionType(str, Enum):
     ADMIN_RUN_DELETE = "admin_run_delete"
     ADMIN_DSAR_EXPORT = "admin_dsar_export"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
+<<<<<<< HEAD
     # ── Foundry Shield uplift (phases 1–7) ─────────────────────────────────
     # Phase 1 — layered prompt injection defense (LLM01)
     PROMPT_SHIELD_SCAN = "prompt_shield_scan"
@@ -55,6 +56,8 @@ class ActionType(str, Enum):
     EXCESSIVE_AGENCY_BLOCK = "excessive_agency_block"
     LOOP_DETECTED = "loop_detected"
     COST_THRESHOLD_BREACH = "cost_threshold_breach"
+=======
+>>>>>>> origin/main
 
 
 class PolicyDecision(str, Enum):
@@ -95,6 +98,7 @@ class AuditEvent(BaseModel):
     consent_status: str = "not_required"
     parent_run_id: str | None = None
     correlation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+<<<<<<< HEAD
     # ── Foundry Shield uplift fields (all optional; backwards-compatible) ───
     parent_agent_id: str | None = None
     call_chain: list[str] = Field(default_factory=list)
@@ -104,6 +108,8 @@ class AuditEvent(BaseModel):
     confirmation_token: str | None = None
     estimated_cost_usd: float | None = None
     anomaly_score: float | None = None
+=======
+>>>>>>> origin/main
 
     def to_log_analytics_row(self) -> dict:
         """Serialize for Log Analytics DCR ingestion."""
@@ -124,13 +130,18 @@ class AuditEvent(BaseModel):
             "classification_label": self.classification_label or "",
             "dlp_patterns": ",".join(self.dlp_patterns),
             "content_safety_category": self.content_safety_category or "",
+<<<<<<< HEAD
             "grounding_score": (
                 self.grounding_score if self.grounding_score is not None else 0.0
             ),
+=======
+            "grounding_score": self.grounding_score if self.grounding_score is not None else 0.0,
+>>>>>>> origin/main
             "data_processing_basis": self.data_processing_basis,
             "consent_status": self.consent_status,
             "parent_run_id": self.parent_run_id or "",
             "correlation_id": self.correlation_id,
+<<<<<<< HEAD
             # Foundry Shield uplift fields (camelCase per DCR convention)
             "parentAgentId": self.parent_agent_id or "",
             "callChain": ",".join(self.call_chain),
@@ -146,4 +157,6 @@ class AuditEvent(BaseModel):
             "anomalyScore": (
                 self.anomaly_score if self.anomaly_score is not None else 0.0
             ),
+=======
+>>>>>>> origin/main
         }
