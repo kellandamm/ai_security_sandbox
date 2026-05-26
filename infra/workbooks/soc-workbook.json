@@ -1,0 +1,522 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "text-intro",
+      "content": {
+        "json": "# AI Security Sandbox — SOC Workbook\n\nOperational visibility for the AI Security Sandbox: policy enforcement, DLP / content safety, prompt-injection defense, agent delegation trust, MCP tool calls, anomaly / cost guardrails, approvals, and run lifecycle — all sourced from `AiAgentAudit_CL`.\n\n> Tip: every panel respects the **Time Range**, **Agent Type**, **Action Type**, and **Run ID** parameters below. Leave a parameter blank (or `*`) to disable that filter."
+      }
+    },
+    {
+      "type": 9,
+      "name": "filters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "p-time",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 86400000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                { "durationMs": 1800000 },
+                { "durationMs": 3600000 },
+                { "durationMs": 14400000 },
+                { "durationMs": 43200000 },
+                { "durationMs": 86400000 },
+                { "durationMs": 259200000 },
+                { "durationMs": 604800000 },
+                { "durationMs": 2592000000 }
+              ]
+            }
+          },
+          {
+            "id": "p-agent",
+            "version": "KqlParameterItem/1.0",
+            "name": "AgentType",
+            "label": "Agent type",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": {
+              "additionalResourceOptions": ["value::all"],
+              "showDefault": false
+            },
+            "query": "AiAgentAudit_CL | extend agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))) | where isnotempty(agent_type_x) | distinct agent_type_x | order by agent_type_x asc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+            "value": ["value::all"]
+          },
+          {
+            "id": "p-action",
+            "version": "KqlParameterItem/1.0",
+            "name": "ActionType",
+            "label": "Action type",
+            "type": 2,
+            "isRequired": false,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "typeSettings": {
+              "additionalResourceOptions": ["value::all"],
+              "showDefault": false
+            },
+            "query": "AiAgentAudit_CL | extend action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))) | where isnotempty(action_type_x) | distinct action_type_x | order by action_type_x asc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+            "value": ["value::all"]
+          },
+          {
+            "id": "p-runid",
+            "version": "KqlParameterItem/1.0",
+            "name": "RunId",
+            "label": "Run ID (substring)",
+            "type": 1,
+            "isRequired": false,
+            "value": ""
+          }
+        ]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-kpis",
+      "content": {
+        "json": "## Operational KPIs\n\nA single-pane overview comparable to the Microsoft Sentinel & Defender XDR landing pages — **activity volume**, **policy enforcement**, **threat detections**, and **operations & cost** — all scoped by the filters above. Each tile drills into evidence rows in the sections below."
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-kpis-activity",
+      "content": { "json": "### Activity volume" }
+    },
+    {
+      "type": 3,
+      "name": "tiles-activity",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let _audit = AiAgentAudit_CL\n  | where TimeGenerated {TimeRange}\n  | extend\n      agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n      action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n      policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n      outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n      run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n      error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', '')))\n  | where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n  | where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n  | where '{RunId}' == '' or run_id_x has '{RunId}';\nlet _events = toscalar(_audit | count);\nlet _runs   = toscalar(_audit | summarize dcount(run_id_x));\nlet _agents = toscalar(_audit | summarize dcount(agent_type_x));\nlet _starts = toscalar(_audit | where action_type_x == 'run_start' | count);\nlet _completes = toscalar(_audit | where action_type_x == 'run_complete' | count);\nlet _aborts = toscalar(_audit | where action_type_x == 'run_abort' | count);\nlet _errors = toscalar(_audit | where isnotempty(error_code_x) | count);\nunion\n  (print Name='Events', Value=todouble(_events), Order=1),\n  (print Name='Active runs', Value=todouble(_runs), Order=2),\n  (print Name='Agents involved', Value=todouble(_agents), Order=3),\n  (print Name='Avg events / run', Value=iif(_runs>0, round(todouble(_events)/todouble(_runs),1), 0.0), Order=4),\n  (print Name='Runs started', Value=todouble(_starts), Order=5),\n  (print Name='Runs completed', Value=todouble(_completes), Order=6),\n  (print Name='Runs aborted', Value=todouble(_aborts), Order=7),\n  (print Name='Error rate %', Value=iif(_events>0, round(100.0*todouble(_errors)/todouble(_events),1), 0.0), Order=8)\n| order by Order asc\n| project Name, Value",
+        "size": 3,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "visualization": "tiles",
+        "tileSettings": {
+          "showBorder": true,
+          "titleContent": { "columnMatch": "Name", "formatter": 1 },
+          "leftContent": { "columnMatch": "Value", "formatter": 12, "formatOptions": { "palette": "blue" } }
+        }
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-kpis-policy",
+      "content": { "json": "### Policy enforcement & approvals" }
+    },
+    {
+      "type": 3,
+      "name": "tiles-policy",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let _audit = AiAgentAudit_CL\n  | where TimeGenerated {TimeRange}\n  | extend\n      agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n      action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n      policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n      outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n      run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n  | where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n  | where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n  | where '{RunId}' == '' or run_id_x has '{RunId}';\nlet _events = toscalar(_audit | count);\nlet _allow  = toscalar(_audit | where policy_decision_x == 'allow' | count);\nlet _deny   = toscalar(_audit | where policy_decision_x == 'deny' | count);\nlet _block  = toscalar(_audit | where outcome_x == 'blocked' | count);\nlet _req    = toscalar(_audit | where policy_decision_x == 'requires_approval' or action_type_x == 'approval_request' | count);\nlet _resp   = toscalar(_audit | where action_type_x == 'approval_response' | count);\nlet _grant  = toscalar(_audit | where action_type_x == 'approval_response' and outcome_x == 'granted' | count);\nlet _kill   = toscalar(_audit | where action_type_x in ('kill_switch_check','admin_kill_switch_toggle') | count);\nunion\n  (print Name='Allowed', Value=todouble(_allow), Order=1),\n  (print Name='Denied', Value=todouble(_deny), Order=2),\n  (print Name='Blocked', Value=todouble(_block), Order=3),\n  (print Name='Approvals requested', Value=todouble(_req), Order=4),\n  (print Name='Approvals responded', Value=todouble(_resp), Order=5),\n  (print Name='Approvals granted', Value=todouble(_grant), Order=6),\n  (print Name='Block rate %', Value=iif(_events>0, round(100.0*todouble(_deny+_block)/todouble(_events),1), 0.0), Order=7),\n  (print Name='Kill-switch events', Value=todouble(_kill), Order=8)\n| order by Order asc\n| project Name, Value",
+        "size": 3,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "visualization": "tiles",
+        "tileSettings": {
+          "showBorder": true,
+          "titleContent": { "columnMatch": "Name", "formatter": 1 },
+          "leftContent": { "columnMatch": "Value", "formatter": 12, "formatOptions": { "palette": "purple" } }
+        }
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-kpis-threats",
+      "content": { "json": "### Threat detections (OWASP LLM Top-10 coverage)" }
+    },
+    {
+      "type": 3,
+      "name": "tiles-threats",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let _audit = AiAgentAudit_CL\n  | where TimeGenerated {TimeRange}\n  | extend\n      agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n      action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n      policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n      outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n      run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n      dlp_patterns_x=tostring(column_ifexists('dlp_patterns_s', column_ifexists('dlp_patterns', ''))),\n      content_safety_x=tostring(column_ifexists('content_safety_category_s', column_ifexists('content_safety_category', ''))),\n      injection_score_x=todouble(column_ifexists('injectionScore', column_ifexists('injection_score_d', column_ifexists('injection_score', real(null)))))\n  | where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n  | where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n  | where '{RunId}' == '' or run_id_x has '{RunId}';\nlet _injBlock = toscalar(_audit | where action_type_x == 'prompt_shield_scan' and (policy_decision_x == 'deny' or outcome_x == 'blocked' or injection_score_x >= 0.7) | count);\nlet _dlp      = toscalar(_audit | where action_type_x == 'dlp_scan' and (policy_decision_x == 'deny' or outcome_x == 'blocked' or isnotempty(dlp_patterns_x)) | count);\nlet _cs       = toscalar(_audit | where action_type_x in ('content_safety_check','content_safety_scan','retrieved_content_scan') and (policy_decision_x == 'deny' or outcome_x == 'blocked' or isnotempty(content_safety_x)) | count);\nlet _exc      = toscalar(_audit | where action_type_x == 'excessive_agency_block' | count);\nlet _sig      = toscalar(_audit | where action_type_x == 'signature_verification_failure' | count);\nlet _xt       = toscalar(_audit | where action_type_x == 'cross_tenant_access_attempt' | count);\nlet _deleg    = toscalar(_audit | where action_type_x in ('delegation_check','agent_delegation') and (policy_decision_x == 'deny' or outcome_x == 'blocked') | count);\nlet _ground   = toscalar(_audit | where action_type_x == 'grounding_check' and outcome_x == 'blocked' | count);\nlet _runsHit  = toscalar(_audit | where action_type_x in ('prompt_shield_scan','dlp_scan','content_safety_check','content_safety_scan','retrieved_content_scan','excessive_agency_block','signature_verification_failure','cross_tenant_access_attempt','delegation_check','agent_delegation','grounding_check') and (policy_decision_x == 'deny' or outcome_x == 'blocked' or isnotempty(dlp_patterns_x) or isnotempty(content_safety_x) or injection_score_x >= 0.7) | summarize dcount(run_id_x));\nunion\n  (print Name='Prompt-injection blocks', Value=todouble(_injBlock), Order=1),\n  (print Name='DLP interceptions', Value=todouble(_dlp), Order=2),\n  (print Name='Content safety blocks', Value=todouble(_cs), Order=3),\n  (print Name='Excessive agency (LLM08)', Value=todouble(_exc), Order=4),\n  (print Name='Signature failures', Value=todouble(_sig), Order=5),\n  (print Name='Cross-tenant attempts', Value=todouble(_xt), Order=6),\n  (print Name='Untrusted delegation', Value=todouble(_deleg), Order=7),\n  (print Name='Grounding failures', Value=todouble(_ground), Order=8),\n  (print Name='Runs with detections', Value=todouble(_runsHit), Order=9)\n| order by Order asc\n| project Name, Value",
+        "size": 3,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "visualization": "tiles",
+        "tileSettings": {
+          "showBorder": true,
+          "titleContent": { "columnMatch": "Name", "formatter": 1 },
+          "leftContent": { "columnMatch": "Value", "formatter": 12, "formatOptions": { "palette": "redBright" } }
+        }
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-kpis-ops",
+      "content": { "json": "### Operations, anomalies & cost" }
+    },
+    {
+      "type": 3,
+      "name": "tiles-ops-cost",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let _audit = AiAgentAudit_CL\n  | where TimeGenerated {TimeRange}\n  | extend\n      agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n      action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n      outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n      run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n      token_count_x=toint(column_ifexists('token_count_d', column_ifexists('token_count', int(0)))),\n      cost_x=todouble(column_ifexists('estimatedCostUsd', column_ifexists('estimated_cost_usd_d', column_ifexists('estimated_cost_usd', real(null))))),\n      anomaly_score_x=todouble(column_ifexists('anomalyScore', column_ifexists('anomaly_score_d', column_ifexists('anomaly_score', real(null)))))\n  | where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n  | where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n  | where '{RunId}' == '' or run_id_x has '{RunId}';\nlet _anom    = toscalar(_audit | where action_type_x == 'anomaly_ml_score' and isnotnull(anomaly_score_x) and anomaly_score_x >= 0.7 | count);\nlet _cost_br = toscalar(_audit | where action_type_x == 'cost_threshold_breach' | count);\nlet _costSum = toscalar(_audit | summarize sum(cost_x));\nlet _tokens  = toscalar(_audit | summarize sum(token_count_x));\nlet _loop    = toscalar(_audit | where action_type_x in ('loop_detected','loop_halt') | count);\nlet _mcp     = toscalar(_audit | where action_type_x in ('mcp_tool_call','mcp_tool_discovery') | count);\nlet _rl      = toscalar(_audit | where action_type_x == 'rate_limit_exceeded' | count);\nlet _dsar    = toscalar(_audit | where action_type_x in ('admin_dsar_export','dsar_purge','dsar_request') | count);\nlet _gov     = toscalar(_audit | where action_type_x == 'governance_attestation' | count);\nunion\n  (print Name='Anomalies (>=0.7)', Value=todouble(_anom), Order=1),\n  (print Name='Cost-threshold breaches', Value=todouble(_cost_br), Order=2),\n  (print Name='Est. spend (USD)', Value=round(coalesce(_costSum, 0.0),2), Order=3),\n  (print Name='Tokens consumed', Value=todouble(coalesce(_tokens, 0)), Order=4),\n  (print Name='Loop halts', Value=todouble(_loop), Order=5),\n  (print Name='MCP tool calls', Value=todouble(_mcp), Order=6),\n  (print Name='Rate-limit blocks', Value=todouble(_rl), Order=7),\n  (print Name='DSAR operations', Value=todouble(_dsar), Order=8),\n  (print Name='Governance attestations', Value=todouble(_gov), Order=9)\n| order by Order asc\n| project Name, Value",
+        "size": 3,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "visualization": "tiles",
+        "tileSettings": {
+          "showBorder": true,
+          "titleContent": { "columnMatch": "Name", "formatter": 1 },
+          "leftContent": { "columnMatch": "Value", "formatter": 12, "formatOptions": { "palette": "orange" } }
+        }
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-trends",
+      "content": { "json": "## Activity Over Time" }
+    },
+    {
+      "type": 3,
+      "name": "chart-policy-trend",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| summarize Events=count() by bin(TimeGenerated, {TimeRange:grain}), policy_decision_x\n| render timechart",
+        "size": 0,
+        "title": "Policy decisions over time",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "chart-actions-trend",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| summarize Events=count() by bin(TimeGenerated, {TimeRange:grain}), action_type_x\n| render timechart",
+        "size": 0,
+        "title": "Top action types over time",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-policy",
+      "content": { "json": "## Policy & Capability Enforcement\n\nPosture summary, top denied destinations, approval flow, and excessive-agency blocks." }
+    },
+    {
+      "type": 3,
+      "name": "query-posture",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where action_type_x in~ ({ActionType}) or '*' in~ ({ActionType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| summarize events=count(),\n            denies=countif(policy_decision_x == 'deny'),\n            blocks=countif(outcome_x == 'blocked'),\n            approvals=countif(policy_decision_x == 'requires_approval')\n        by action_type_x\n| extend block_rate=iif(events>0, todouble(denies+blocks)/events, 0.0)\n| order by blocks desc, denies desc, events desc",
+        "size": 0,
+        "title": "Policy posture by action type",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "block_rate", "formatter": 8, "formatOptions": { "palette": "redBright" } },
+            { "columnMatch": "denies", "formatter": 8, "formatOptions": { "palette": "red" } }
+          ]
+        }
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-top-denied-destinations",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    destination_x=tostring(column_ifexists('destination_s', column_ifexists('destination', ''))),\n    path_x=tostring(column_ifexists('path_s', column_ifexists('path', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where policy_decision_x == 'deny' or outcome_x == 'blocked'\n| extend target = iif(isnotempty(destination_x), destination_x, path_x)\n| where isnotempty(target)\n| summarize denies=count(), runs=dcount(run_id_x) by action_type_x, target\n| order by denies desc\n| take 25",
+        "size": 0,
+        "title": "Top blocked destinations / paths",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-approvals",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n    destination_x=tostring(column_ifexists('destination_s', column_ifexists('destination', ''))),\n    path_x=tostring(column_ifexists('path_s', column_ifexists('path', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x in ('approval_request', 'approval_response') or policy_decision_x == 'requires_approval'\n| project TimeGenerated, run_id_x, agent_type_x, action_type_x, policy_decision_x, outcome_x, destination_x, path_x, correlation_id_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "High-risk action approval flow",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-excessive-agency",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'excessive_agency_block'\n| project TimeGenerated, run_id_x, agent_type_x, error_code_x, correlation_id_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Excessive-agency blocks (LLM08)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-content-safety",
+      "content": { "json": "## Content Safety & DLP" }
+    },
+    {
+      "type": 3,
+      "name": "query-dlp",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    dlp_patterns_x=tostring(column_ifexists('dlp_patterns_s', column_ifexists('dlp_patterns', ''))),\n    classification_label_x=tostring(column_ifexists('classification_label_s', column_ifexists('classification_label', ''))),\n    risk_score_x=todouble(column_ifexists('risk_score_d', column_ifexists('risk_score', real(null)))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'dlp_scan'\n| where policy_decision_x == 'deny' or outcome_x == 'blocked' or dlp_patterns_x != ''\n| project TimeGenerated, run_id_x, agent_type_x, dlp_patterns_x, classification_label_x, risk_score_x, error_code_x, correlation_id_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "DLP interceptions",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-content-safety",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    content_safety_category_x=tostring(column_ifexists('content_safety_category_s', column_ifexists('content_safety_category', ''))),\n    risk_score_x=todouble(column_ifexists('risk_score_d', column_ifexists('risk_score', real(null)))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'content_safety_check'\n| where policy_decision_x == 'deny' or outcome_x == 'blocked'\n| project TimeGenerated, run_id_x, agent_type_x, content_safety_category_x, risk_score_x, error_code_x, correlation_id_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Content Safety blocks",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-prompt-shield",
+      "content": { "json": "## Prompt Shield (LLM01 — prompt injection)\n\nLayered defense: deterministic patterns + heuristic scoring + retrieved-content scans on RAG inputs." }
+    },
+    {
+      "type": 3,
+      "name": "query-prompt-shield",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    injection_score_x=todouble(column_ifexists('injectionScore', column_ifexists('injection_score_d', column_ifexists('injection_score', real(null))))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x in ('prompt_shield_scan', 'retrieved_content_scan')\n| project TimeGenerated, run_id_x, agent_type_x, action_type_x, policy_decision_x, outcome_x, injection_score_x, error_code_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Prompt-shield scans (input + retrieved content)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "injection_score_x", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 1 } }
+          ]
+        }
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-delegation",
+      "content": { "json": "## Agent Trust & Delegation\n\nSpawn / delegation events, signed identity envelope failures, and cross-tenant probing." }
+    },
+    {
+      "type": 3,
+      "name": "query-delegation",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    parent_agent_id_x=tostring(column_ifexists('parentAgentId', column_ifexists('parent_agent_id_s', column_ifexists('parent_agent_id', '')))),\n    call_chain_x=tostring(column_ifexists('callChain', column_ifexists('call_chain_s', column_ifexists('call_chain', '')))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n    parent_run_id_x=tostring(column_ifexists('parent_run_id_s', column_ifexists('parent_run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}' or parent_run_id_x has '{RunId}'\n| where action_type_x in ('agent_spawn', 'agent_delegation', 'delegation_check')\n| project TimeGenerated, run_id_x, parent_run_id_x, agent_type_x, action_type_x, policy_decision_x, outcome_x, parent_agent_id_x, call_chain_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Agent spawn / delegation",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-signature-failures",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x in ('signature_verification_failure', 'cross_tenant_access_attempt')\n| summarize count(), arg_max(TimeGenerated, correlation_id_x, error_code_x) by action_type_x, run_id_x\n| order by count_ desc",
+        "size": 0,
+        "title": "Signature failures & cross-tenant probing",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-mcp",
+      "content": { "json": "## MCP Tooling\n\nModel Context Protocol tool discovery and invocation. Each tool call is namespaced (`mcp://<server>/<agent>/<tool>`)." }
+    },
+    {
+      "type": 3,
+      "name": "query-mcp-calls",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    policy_decision_x=tostring(column_ifexists('policy_decision_s', column_ifexists('policy_decision', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    tool_namespace_x=tostring(column_ifexists('toolNamespace', column_ifexists('tool_namespace_s', column_ifexists('tool_namespace', '')))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x in ('mcp_tool_call', 'mcp_tool_discovery')\n| summarize calls=count(),\n            denies=countif(policy_decision_x == 'deny'),\n            blocks=countif(outcome_x == 'blocked')\n        by tool_namespace_x, action_type_x, agent_type_x\n| order by calls desc",
+        "size": 0,
+        "title": "MCP tool usage",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-anomaly-cost",
+      "content": { "json": "## Anomalies, Cost & Loops\n\nML-style anomaly scores, cost-threshold breaches, runaway loops, and token budget consumption." }
+    },
+    {
+      "type": 3,
+      "name": "query-anomaly-ml",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    anomaly_score_x=todouble(column_ifexists('anomalyScore', column_ifexists('anomaly_score_d', column_ifexists('anomaly_score', real(null))))),\n    risk_score_x=todouble(column_ifexists('risk_score_d', column_ifexists('risk_score', real(null)))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'anomaly_ml_score'\n| where isnotnull(anomaly_score_x)\n| project TimeGenerated, run_id_x, agent_type_x, anomaly_score_x, risk_score_x\n| order by anomaly_score_x desc, TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Anomaly ML scores (top 50)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"],
+        "gridSettings": {
+          "formatters": [
+            { "columnMatch": "anomaly_score_x", "formatter": 8, "formatOptions": { "palette": "redBright", "min": 0, "max": 1 } }
+          ]
+        }
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-cost",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    estimated_cost_usd_x=todouble(column_ifexists('estimatedCostUsd', column_ifexists('estimated_cost_usd_d', column_ifexists('estimated_cost_usd', real(null))))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| summarize\n    total_cost_usd=sum(estimated_cost_usd_x),\n    cost_breaches=countif(action_type_x == 'cost_threshold_breach')\n  by run_id_x, agent_type_x\n| where total_cost_usd > 0 or cost_breaches > 0\n| order by total_cost_usd desc",
+        "size": 0,
+        "title": "Cost per run (USD) and threshold breaches",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-loop-detection",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'loop_detected'\n| summarize occurrences=count(), arg_max(TimeGenerated, error_code_x) by run_id_x, agent_type_x\n| order by occurrences desc",
+        "size": 0,
+        "title": "Loop detection",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-token",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    token_count_x=toint(column_ifexists('token_count_d', column_ifexists('token_count', int(0)))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'openai_call'\n| summarize total_tokens=sum(token_count_x),\n            avg_tokens=avg(token_count_x),\n            calls=count()\n        by run_id_x, agent_type_x\n| order by total_tokens desc",
+        "size": 0,
+        "title": "Token budget consumption per run",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-anomaly-candidates",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let _audit = AiAgentAudit_CL\n  | where TimeGenerated {TimeRange}\n  | extend\n      run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', ''))),\n      agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n      token_count_x=toint(column_ifexists('token_count_d', column_ifexists('token_count', int(0)))),\n      risk_score_x=todouble(column_ifexists('risk_score_d', column_ifexists('risk_score', real(null)))),\n      anomaly_score_x=todouble(column_ifexists('anomalyScore', column_ifexists('anomaly_score_d', column_ifexists('anomaly_score', real(null)))));\nlet per_run = _audit\n  | summarize total_events=count(),\n              total_tokens=sum(token_count_x),\n              max_risk=max(risk_score_x),\n              max_anomaly=max(anomaly_score_x)\n          by run_id_x, agent_type_x;\nlet baselines = per_run\n  | summarize avg_events=avg(total_events), avg_tokens=avg(total_tokens)\n  | extend _join_key=1;\nper_run\n| extend _join_key=1\n| join kind=inner baselines on _join_key\n| where total_events > (avg_events * 3.0)\n    or total_tokens > (avg_tokens * 3.0)\n    or max_risk >= 0.8\n    or max_anomaly >= 0.7\n| project run_id_x, agent_type_x, total_events, total_tokens, max_risk, max_anomaly, avg_events, avg_tokens\n| order by max_anomaly desc, max_risk desc, total_events desc",
+        "size": 0,
+        "title": "Run-level anomaly candidates",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 1,
+      "name": "text-ops",
+      "content": { "json": "## Operational Health\n\nKill-switch toggles, run lifecycle, rate limiting, DSAR exports — the ambient SRE/IR signals." }
+    },
+    {
+      "type": 3,
+      "name": "query-runs-lifecycle",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    agent_type_x=tostring(column_ifexists('agent_type_s', column_ifexists('agent_type', ''))),\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where agent_type_x in~ ({AgentType}) or '*' in~ ({AgentType})\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x in ('run_start', 'run_complete', 'run_abort')\n| summarize\n    starts=countif(action_type_x == 'run_start'),\n    completes=countif(action_type_x == 'run_complete'),\n    aborts=countif(action_type_x == 'run_abort'),\n    failures=countif(outcome_x == 'failure'),\n    timeouts=countif(outcome_x == 'timeout')\n  by bin(TimeGenerated, {TimeRange:grain}), agent_type_x\n| render columnchart kind=unstacked",
+        "size": 0,
+        "title": "Run lifecycle (start / complete / abort)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-kill-switch-toggles",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    path_x=tostring(column_ifexists('path_s', column_ifexists('path', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', '')))\n| where action_type_x in ('admin_kill_switch_toggle', 'kill_switch_check')\n| where action_type_x == 'admin_kill_switch_toggle' or outcome_x == 'blocked'\n| project TimeGenerated, action_type_x, outcome_x, flag=path_x, correlation_id_x\n| order by TimeGenerated desc\n| take 50",
+        "size": 0,
+        "title": "Kill-switch toggles & blocks",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-rate-limit",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    run_id_x=tostring(column_ifexists('run_id_s', column_ifexists('run_id', '')))\n| where '{RunId}' == '' or run_id_x has '{RunId}'\n| where action_type_x == 'rate_limit_exceeded'\n| summarize hits=count(), arg_max(TimeGenerated, error_code_x) by run_id_x\n| order by hits desc",
+        "size": 0,
+        "title": "Rate-limit hits",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    },
+    {
+      "type": 3,
+      "name": "query-dsar",
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AiAgentAudit_CL\n| where TimeGenerated {TimeRange}\n| extend\n    action_type_x=tostring(column_ifexists('action_type_s', column_ifexists('action_type', ''))),\n    outcome_x=tostring(column_ifexists('outcome_s', column_ifexists('outcome', ''))),\n    error_code_x=tostring(column_ifexists('error_code_s', column_ifexists('error_code', ''))),\n    correlation_id_x=tostring(column_ifexists('correlation_id_s', column_ifexists('correlation_id', '')))\n| where action_type_x in ('admin_dsar_export', 'dsar_purge', 'admin_run_delete')\n| project TimeGenerated, action_type_x, outcome_x, error_code_x, correlation_id_x\n| order by TimeGenerated desc",
+        "size": 0,
+        "title": "Compliance / admin actions (DSAR, purge, delete)",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": ["__WORKSPACE_RESOURCE_ID__"]
+      }
+    }
+  ],
+  "fallbackResourceIds": ["__WORKSPACE_RESOURCE_ID__"]
+}

@@ -1,0 +1,16 @@
+customer_id,full_name,email,phone,country,signup_date,tier,monthly_spend_usd,last_login,risk_flag
+CUS-100001,Alice Johnson,alice.johnson@contoso.com,+1-415-555-0142,US,2023-04-12,enterprise,4820.00,2026-05-19T14:21:00Z,low
+CUS-100002,Bilal Ahmed,bilal.ahmed@fabrikam.example,+44-20-7946-0958,GB,2022-11-03,growth,1240.00,2026-05-20T09:11:42Z,low
+CUS-100003,Chloe Dupont,chloe.dupont@contoso.com,+33-1-70-12-34-56,FR,2024-01-22,starter,49.00,2026-05-21T07:02:11Z,medium
+CUS-100004,Daichi Tanaka,daichi.tanaka@northwind.example,+81-3-4567-8901,JP,2023-09-30,growth,980.00,2026-05-18T22:30:00Z,low
+CUS-100005,Elena Petrova,elena.petrova@contoso.com,+7-495-555-0188,RU,2025-02-14,starter,0.00,2026-04-02T11:15:00Z,high
+CUS-100006,Faisal Rahman,faisal.rahman@adatum.example,+971-4-555-0123,AE,2024-06-19,enterprise,6100.00,2026-05-21T03:45:00Z,low
+CUS-100007,Greta Lindqvist,greta.lindqvist@contoso.com,+46-8-555-0177,SE,2023-12-08,growth,1875.00,2026-05-20T17:55:00Z,low
+CUS-100008,Hiro Sato,hiro.sato@fabrikam.example,+81-90-1234-5678,JP,2024-08-11,growth,1320.00,2026-05-19T08:19:00Z,low
+CUS-100009,Isabel Garcia,isabel.garcia@contoso.com,+34-91-555-0166,ES,2022-07-25,enterprise,8210.00,2026-05-21T12:00:00Z,low
+CUS-100010,Jonas Becker,jonas.becker@adatum.example,+49-30-555-0144,DE,2025-04-30,starter,49.00,2026-05-15T20:10:00Z,medium
+CUS-100011,Kavya Iyer,kavya.iyer@contoso.com,+91-22-5555-0123,IN,2023-03-17,growth,2440.00,2026-05-21T05:25:00Z,low
+CUS-100012,Liam O'Connor,liam.oconnor@northwind.example,+353-1-555-0102,IE,2024-10-05,enterprise,5530.00,2026-05-20T13:48:00Z,low
+CUS-100013,Mei Chen,mei.chen@contoso.com,+86-10-5555-0188,CN,2025-01-19,starter,49.00,2026-05-21T01:30:00Z,low
+CUS-100014,Noah Williams,noah.williams@fabrikam.example,+1-202-555-0177,US,2022-05-14,growth,1100.00,2026-05-19T19:02:00Z,low
+CUS-100015,Olga Novak,olga.novak@adatum.example,+48-22-555-0166,PL,2024-02-28,growth,1680.00,2026-05-20T22:14:00Z,low

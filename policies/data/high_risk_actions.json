@@ -1,0 +1,9 @@
+{
+  "high_risk_actions": [
+    "http_post",
+    "http_put",
+    "http_delete",
+    "http_patch"
+  ],
+  "_comment": "Actions in this list require human-in-the-loop approval before execution. Read-only HTTP GET is allowed without approval; any mutating HTTP method requires explicit sign-off."
+}

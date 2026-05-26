@@ -1,0 +1,267 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options: [dev, prod]
+
+env:
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'dev' }}
+  AZURE_LOCATION: eastus
+
+jobs:
+  # ── Deploy Infrastructure ────────────────────────────────────────────────────
+  deploy-infra:
+    name: Deploy Bicep Infrastructure
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    outputs:
+      acr_name: ${{ steps.deploy.outputs.AZURE_CONTAINER_REGISTRY_NAME }}
+      acr_endpoint: ${{ steps.deploy.outputs.AZURE_CONTAINER_REGISTRY_ENDPOINT }}
+      aca_env_name: ${{ steps.deploy.outputs.AZURE_CONTAINER_APPS_ENVIRONMENT_NAME }}
+      orchestrator_app: ${{ steps.deploy.outputs.ORCHESTRATOR_APP_NAME }}
+      orchestrator_webapp_name: ${{ steps.deploy.outputs.ORCHESTRATOR_WEBAPP_NAME }}
+      opa_webapp_name: ${{ steps.deploy.outputs.OPA_WEBAPP_NAME }}
+      agent_job: ${{ steps.deploy.outputs.AGENT_JOB_NAME }}
+      resource_group: ${{ steps.deploy.outputs.AZURE_RESOURCE_GROUP }}
+      apim_url: ${{ steps.deploy.outputs.APIM_GATEWAY_URL }}
+      frontend_url: ${{ steps.deploy.outputs.FRONTEND_URL }}
+      frontend_webapp_name: ${{ steps.deploy.outputs.FRONTEND_WEBAPP_NAME }}
+      frontend_storage_account: ${{ steps.deploy.outputs.FRONTEND_STORAGE_ACCOUNT_NAME }}
+      aad_client_id: ${{ steps.deploy.outputs.AAD_CLIENT_ID }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC — no stored credentials)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve deployer principal ID
+        id: deployer
+        run: |
+          PRINCIPAL_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query id -o tsv)
+          echo "principal_id=$PRINCIPAL_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Bicep
+        id: deploy
+        uses: azure/arm-deploy@v2
+        with:
+          scope: subscription
+          region: ${{ env.AZURE_LOCATION }}
+          template: infra/main.bicep
+          parameters: >
+            environmentName=${{ env.ENVIRONMENT }}
+            location=${{ env.AZURE_LOCATION }}
+            approverEmail=${{ secrets.APPROVER_EMAIL }}
+            aadClientId=${{ secrets.AAD_CLIENT_ID }}
+            deployerPrincipalId=${{ steps.deployer.outputs.principal_id }}
+          deploymentName: ai-sandbox-${{ github.run_number }}
+          failOnStdErr: true
+
+  # ── Build & Push Container Images ────────────────────────────────────────────
+  build-push:
+    name: Build & Push Images
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR Login
+        run: az acr login --name ${{ needs.deploy-infra.outputs.acr_endpoint }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push orchestrator image
+        uses: docker/build-push-action@v5
+        with:
+          context: app/
+          push: true
+          tags: |
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/orchestrator:latest
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/orchestrator:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Tag agent-runner (same image, different role)
+        run: |
+          ACR=${{ needs.deploy-infra.outputs.acr_endpoint }}
+          docker tag ${ACR}/ai-sandbox/orchestrator:latest ${ACR}/ai-sandbox/agent-runner:latest
+          docker push ${ACR}/ai-sandbox/agent-runner:latest
+
+  publish-frontend:
+    name: Build & Deploy Frontend Web App
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: ACR Login
+        run: |
+          az acr login --name ${{ needs.deploy-infra.outputs.acr_name }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: frontend/
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/frontend:latest
+            ${{ needs.deploy-infra.outputs.acr_endpoint }}/ai-sandbox/frontend:${{ github.sha }}
+          build-args: |
+            VITE_API_BASE=${{ needs.deploy-infra.outputs.apim_url }}/sandbox
+            VITE_AAD_CLIENT_ID=${{ needs.deploy-infra.outputs.aad_client_id }}
+            VITE_AAD_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Restart frontend web app
+        run: |
+          az webapp restart \
+            --resource-group ${{ needs.deploy-infra.outputs.resource_group }} \
+            --name ${{ needs.deploy-infra.outputs.frontend_webapp_name }}
+
+      - name: Configure frontend authentication
+        run: |
+          chmod +x scripts/configure-frontend-auth.sh
+          scripts/configure-frontend-auth.sh \
+            "${{ needs.deploy-infra.outputs.frontend_url }}" \
+            "${{ needs.deploy-infra.outputs.frontend_webapp_name }}" \
+            "${{ needs.deploy-infra.outputs.resource_group }}" \
+            "${{ needs.deploy-infra.outputs.aad_client_id }}"
+
+  # ── Build OPA Image & Patch Sidecars ─────────────────────────────────────────
+  push-policies:
+    name: Build OPA Image & Patch Sidecars
+    runs-on: ubuntu-latest
+    needs: deploy-infra
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Build custom OPA image in ACR
+        run: |
+          az acr build \
+            --registry ${{ needs.deploy-infra.outputs.acr_name }} \
+            --image opa:latest-static \
+            --file opa/Dockerfile \
+            .
+
+      - name: Patch orchestrator and agent job with real OPA image
+        run: |
+          RG=${{ needs.deploy-infra.outputs.resource_group }}
+          SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+          OPA_IMAGE="${{ needs.deploy-infra.outputs.acr_endpoint }}/opa:latest-static"
+          APP=${{ needs.deploy-infra.outputs.orchestrator_app }}
+          JOB=${{ needs.deploy-infra.outputs.agent_job }}
+          OPA_WEBAPP=${{ needs.deploy-infra.outputs.opa_webapp_name }}
+
+          patch_opa_sidecar() {
+            local CLI_CMD="$1" NAME="$2" ARM_TYPE="$3"
+            JSON=$(az $CLI_CMD show --name "$NAME" --resource-group "$RG")
+            CONTAINERS=$(echo "$JSON" | python3 -c "
+          import json,sys
+          j=json.load(sys.stdin)
+          for c in j['properties']['template']['containers']:
+              c.pop('imageType', None)
+              if c['name']=='opa-sidecar':
+                  c['image']='$OPA_IMAGE'
+          print(json.dumps(j['properties']['template']['containers']))
+          ")
+            az rest --method PATCH \
+              --uri "https://management.azure.com/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RG/providers/Microsoft.App/${ARM_TYPE}/$NAME?api-version=2024-03-01" \
+              --body "{\"properties\":{\"template\":{\"containers\":$CONTAINERS}}}" \
+              --headers "Content-Type=application/json"
+          }
+
+          patch_opa_sidecar "containerapp" "$APP" "containerApps"
+          patch_opa_sidecar "containerapp job" "$JOB" "jobs"
+
+          if [ -n "$OPA_WEBAPP" ]; then
+            az webapp config set \
+              --name "$OPA_WEBAPP" \
+              --resource-group "$RG" \
+              --linux-fx-version "DOCKER|$OPA_IMAGE"
+            az webapp config appsettings set \
+              --resource-group "$RG" \
+              --name "$OPA_WEBAPP" \
+              --settings WEBSITES_PORT=8181 WEBSITES_ENABLE_APP_SERVICE_STORAGE=false
+            az webapp restart --resource-group "$RG" --name "$OPA_WEBAPP"
+          fi
+
+  # ── Update Container App ─────────────────────────────────────────────────────
+  update-app:
+    name: Update Container App
+    runs-on: ubuntu-latest
+    needs: [deploy-infra, build-push, publish-frontend, push-policies]
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update orchestrator web app container image
+        run: |
+          RG=${{ needs.deploy-infra.outputs.resource_group }}
+          APP=${{ needs.deploy-infra.outputs.orchestrator_webapp_name }}
+          ACR=${{ needs.deploy-infra.outputs.acr_endpoint }}
+          az webapp config set \
+            --name $APP \
+            --resource-group $RG \
+            --linux-fx-version "DOCKER|${ACR}/ai-sandbox/orchestrator:${{ github.sha }}"
+          az webapp restart --resource-group $RG --name $APP
+
+      - name: Smoke test — APIM inward
+        shell: pwsh
+        run: |
+          Start-Sleep -Seconds 20
+          ./scripts/smoke-test.ps1 `
+            -ApimUrl "${{ needs.deploy-infra.outputs.apim_url }}" `
+            -FrontendUrl "${{ needs.deploy-infra.outputs.frontend_url }}" `
+            -AadClientId "${{ needs.deploy-infra.outputs.aad_client_id }}" `
+            -AllowHealthOnlyFallback

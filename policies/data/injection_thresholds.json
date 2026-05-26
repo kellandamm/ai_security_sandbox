@@ -1,0 +1,9 @@
+{
+  "injection": {
+    "deny_score": 0.7,
+    "approval_score": 0.5,
+    "always_block_sources": [
+      "user_prompt"
+    ]
+  }
+}
